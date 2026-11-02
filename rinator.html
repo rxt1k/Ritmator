@@ -24,7 +24,7 @@ button.p{background:var(--ac);border-color:var(--ac);color:#fff}
 .chk{display:flex;gap:6px;align-items:center;color:var(--tx);margin:8px 0 0}.chk input{width:auto}
 #vp{position:relative;background:var(--vp);min-height:0;min-width:0}
 #vp canvas{position:absolute;left:0;top:0;display:block}
-#st{position:absolute;left:12px;bottom:10px;color:var(--mu);pointer-events:none}
+#st{position:absolute;left:12px;right:12px;bottom:10px;color:var(--mu);pointer-events:none;line-height:1.5}
 #tl{grid-column:1/4;background:var(--pn);border-top:1px solid var(--ln);padding:10px 14px;display:grid;grid-template-columns:auto auto 1fr auto;gap:12px;align-items:center}
 #tl button{width:72px}
 #tw{position:relative}
@@ -90,7 +90,8 @@ const status=s=>$('st').textContent=s;
 /* ---------- viewport ---------- */
 function init(){
   const vp=$('vp');
-  ren=new T.WebGLRenderer({antialias:true});ren.setPixelRatio(Math.min(devicePixelRatio,2));vp.appendChild(ren.domElement);
+  try{ren=new T.WebGLRenderer({antialias:true})}catch(e){status('WebGL is not available in this browser. Enable hardware acceleration or try Chrome/Edge/Firefox.');throw e}
+  ren.setPixelRatio(Math.min(devicePixelRatio,2));vp.appendChild(ren.domElement);
   scene=new T.Scene();cam=new T.PerspectiveCamera(45,1,.01,2000);cam.position.set(0,1.5,4);
   scene.add(new T.HemisphereLight(0xffffff,0x555555,1.1));
   const dl=new T.DirectionalLight(0xffffff,1.4);dl.position.set(3,6,4);scene.add(dl);
@@ -122,13 +123,14 @@ function loadBuf(buf){
 }
 function setModel(obj){
   if(root)scene.remove(root);if(helper){scene.remove(helper);helper=null}
-  root=obj;scene.add(root);root.updateMatrixWorld(true);
+  root=obj;scene.add(root);root.updateMatrixWorld(true);noCull();
   const b=new T.Box3().setFromObject(root);H=Math.max(b.getSize(new T.Vector3()).y,1e-3);
   collect();clips=[];cur=null;frame();
   if(bones.length){addPreset('idle');addPreset('walk');cur=clips[0];status('Existing skeleton found: '+bones.length+' bones. Presets are tuned for the Ritmator auto rig.')}
   else status('Model loaded without a skeleton. Press Auto rig.');
   makeHelper();refresh();
 }
+function noCull(){root.traverse(o=>{if(o.isSkinnedMesh)o.frustumCulled=false})}
 function collect(){
   bones=[];bmap={};root.traverse(o=>{if(o.isBone)bones.push(o)});
   bones.forEach(b=>{bmap[b.name]=b;b.userData.rest=b.quaternion.clone();b.userData.rpos=b.position.clone()});
@@ -140,13 +142,20 @@ function makeHelper(){
 }
 
 /* ---------- auto rig ---------- */
-function autoRig(){
+let rigging=false;
+const tick=()=>new Promise(r=>setTimeout(r,0));
+async function autoRig(){
   if(!root)return status('Load a model first');
+  if(rigging)return;
+  rigging=true;
+  try{await autoRigRun()}catch(e){console.error(e);status('Auto rig failed: '+(e&&e.message||e))}
+  rigging=false;
+}
+async function autoRigRun(){
   armMode=$('arms').value;
   root.updateMatrixWorld(true);
   const meshes=[];root.traverse(o=>{if(o.isMesh)meshes.push(o)});
   if(!meshes.length)return status('No meshes found');
-  status('Rigging...');
   const box=new T.Box3().setFromObject(root),s=box.getSize(new T.Vector3()),c=box.getCenter(new T.Vector3());
   const h=s.y,y0=box.min.y,cx=c.x,cz=c.z,hw=s.x/2;
   const P=(x,f,z=0)=>new T.Vector3(cx+x,y0+f*h,cz+z);
@@ -158,28 +167,40 @@ function autoRig(){
     defs.push(['upperArm_'+n,'chest',sh,el],['lowerArm_'+n,'upperArm_'+n,el,wr],['hand_'+n,'lowerArm_'+n,wr,hd],
       ['upperLeg_'+n,'hips',P(lx,.5),P(lx,.28)],['lowerLeg_'+n,'upperLeg_'+n,P(lx,.28),P(lx,.05)],['foot_'+n,'lowerLeg_'+n,P(lx,.05),P(lx,.02,.1*h)]);
   }
-  const rig=new T.Group();rig.name='RitmatorRig';const mk={},bl=[];
-  defs.forEach(([n,p,hd,tl])=>{const b=new T.Bone();b.name=n;b.userData.head=hd;b.userData.tail=tl;b.position.copy(hd).sub(p?mk[p].userData.head:new T.Vector3());(p?mk[p]:rig).add(b);mk[n]=b;bl.push(b)});
+  const rig=new T.Group();rig.name='RitmatorRig';const mk={},bl=[],heads=[],tails=[];
+  defs.forEach(([n,p,hd,tl])=>{const b=new T.Bone();b.name=n;b.position.copy(hd).sub(p?heads[bl.indexOf(mk[p])]:new T.Vector3());(p?mk[p]:rig).add(b);mk[n]=b;bl.push(b);heads.push(hd);tails.push(tl)});
   rig.updateMatrixWorld(true);
-  const skel=new T.Skeleton(bl),segs=bl.map(b=>[b.userData.head,b.userData.tail]);
-  const ab=new T.Vector3(),ap=new T.Vector3(),q=new T.Vector3(),v=new T.Vector3();
-  const dist=(p,a,b)=>{ab.subVectors(b,a);ap.subVectors(p,a);const l=ab.lengthSq(),k=l?Math.min(1,Math.max(0,ap.dot(ab)/l)):0;return q.copy(a).addScaledVector(ab,k).distanceTo(p)};
-  meshes.forEach((m,mi)=>{
-    const g=m.geometry.clone();g.applyMatrix4(m.matrixWorld);
-    const pos=g.attributes.position,n=pos.count,si=new Uint16Array(n*4),sw=new Float32Array(n*4),eps=.002*h;
+  const skel=new T.Skeleton(bl),nb=bl.length;
+  // flat segment arrays for fast weighting
+  const A=new Float32Array(nb*3),B=new Float32Array(nb*3),AB=new Float32Array(nb*3),L2=new Float32Array(nb);
+  for(let j=0;j<nb;j++){const a=heads[j],b=tails[j];A.set([a.x,a.y,a.z],j*3);B.set([b.x,b.y,b.z],j*3);AB.set([b.x-a.x,b.y-a.y,b.z-a.z],j*3);L2[j]=AB[j*3]**2+AB[j*3+1]**2+AB[j*3+2]**2}
+  const dd=new Float32Array(nb),eps=.002*h;
+  let total=0,done=0;meshes.forEach(m=>total+=m.geometry.attributes.position.count);
+  for(let mi=0;mi<meshes.length;mi++){
+    const m=meshes[mi],g=m.geometry.clone();g.applyMatrix4(m.matrixWorld);
+    const pos=g.attributes.position,n=pos.count,si=new Uint16Array(n*4),sw=new Float32Array(n*4);
     for(let i=0;i<n;i++){
-      v.fromBufferAttribute(pos,i);
-      const d=segs.map((sg,j)=>[dist(v,sg[0],sg[1]),j]).sort((a,b)=>a[0]-b[0]).slice(0,3);
-      const w=d.map(x=>1/Math.pow(x[0]+eps,3)),sum=w[0]+w[1]+w[2];
-      for(let k=0;k<3;k++){si[i*4+k]=d[k][1];sw[i*4+k]=w[k]/sum}
+      const px=pos.getX(i),py=pos.getY(i),pz=pos.getZ(i);
+      for(let j=0;j<nb;j++){
+        const j3=j*3,ax=px-A[j3],ay=py-A[j3+1],az=pz-A[j3+2];
+        let k=L2[j]?(ax*AB[j3]+ay*AB[j3+1]+az*AB[j3+2])/L2[j]:0;k=k<0?0:k>1?1:k;
+        const dx=ax-AB[j3]*k,dy=ay-AB[j3+1]*k,dz=az-AB[j3+2]*k;
+        dd[j]=Math.sqrt(dx*dx+dy*dy+dz*dz);
+      }
+      let i0=-1,i1=-1,i2=-1;
+      for(let j=0;j<nb;j++){const d=dd[j];
+        if(i0<0||d<dd[i0]){i2=i1;i1=i0;i0=j}else if(i1<0||d<dd[i1]){i2=i1;i1=j}else if(i2<0||d<dd[i2]){i2=j}}
+      const w0=1/Math.pow(dd[i0]+eps,3),w1=1/Math.pow(dd[i1]+eps,3),w2=1/Math.pow(dd[i2]+eps,3),sum=w0+w1+w2;
+      si[i*4]=i0;si[i*4+1]=i1;si[i*4+2]=i2;sw[i*4]=w0/sum;sw[i*4+1]=w1/sum;sw[i*4+2]=w2/sum;
+      if((++done&8191)===0){status('Rigging... '+Math.round(done/total*100)+'%');await tick()}
     }
     g.setAttribute('skinIndex',new T.Uint16BufferAttribute(si,4));g.setAttribute('skinWeight',new T.Float32BufferAttribute(sw,4));
-    const sm=new T.SkinnedMesh(g,m.material);sm.name=m.name||('mesh'+mi);rig.add(sm);
+    const sm=new T.SkinnedMesh(g,m.material);sm.name=m.name||('mesh'+mi);sm.frustumCulled=false;rig.add(sm);
     sm.bind(skel,new T.Matrix4());
-  });
+  }
   scene.remove(root);if(helper)scene.remove(helper);
   root=rig;scene.add(root);root.updateMatrixWorld(true);
-  collect();clips=[];addPreset('idle');addPreset('walk');cur=clips[0];t=0;makeHelper();refresh();
+  collect();clips=[];addPreset('idle');addPreset('walk');cur=clips[0];t=0;playing=false;$('play').textContent='Play';makeHelper();refresh();
   status('Rigged: '+bones.length+' bones. Add animations on the left, edit poses on the right.');
 }
 
@@ -199,31 +220,31 @@ function find(k){
 function addPreset(kind,silent){
   const k=parseFloat($('int').value)||1,N=12,dur={idle:3,walk:1,run:.7,wave:2,jump:1.2,empty:2}[kind],tr={};
   const baseZ=sd=>sd*({T:-70,A:0,D:0}[armMode]),lift={T:70,A:105,D:150}[armMode];
-  const add=(key,fn)=>{const nm=find(key);if(!nm)return;tr[nm]=[];for(let i=0;i<=N;i++){const r=fn(i/N*Math.PI*2,i/N),o={t:dur*i/N,e:r.e.map(x=>x*k)};if(r.p)o.p=r.p.map(x=>x*k);tr[nm].push(o)}};
+  const add=(key,fn)=>{const nm=find(key);if(!nm)return;tr[nm]=[];for(let i=0;i<=N;i++){const r=fn(i/N*Math.PI*2,i/N),o={t:dur*i/N,e:r.e.map((x,j)=>x*k+(r.b?r.b[j]:0))};if(r.p)o.p=r.p.map(x=>x*k);tr[nm].push(o)}};
   const E=(x=0,y=0,z=0,p)=>({e:[x,y,z],p}),S=Math.sin,C=Math.cos;
   const elbow=(sd,a)=>armMode==='T'?[0,-sd*a,0]:[-a,0,0];
   if(kind==='idle'){
     add('hips',p=>E(0,S(p)*1.2,0,[0,H*.004*S(p*2),0]));add('spine',p=>E(S(p)*1.2));add('chest',p=>E(S(p)*2));add('head',p=>E(S(p+1)*2,S(p)*3));
-    for(const [sd,n] of [[1,'L'],[-1,'R']]){add('upperArm_'+n,p=>({e:[S(p+sd)*2,0,baseZ(sd)]}))}
+    for(const [sd,n] of [[1,'L'],[-1,'R']]){add('upperArm_'+n,p=>({e:[S(p+sd)*2,0,0],b:[0,0,baseZ(sd)]}))}
   }
   if(kind==='walk'||kind==='run'){
     const run=kind==='run',la=run?55:30,kn=run?85:45,as=run?45:25;
     add('hips',(p)=>E(0,S(p)*(run?6:4),0,[0,H*(run?.035:.018)*C(p*2),0]));add('spine',p=>E(run?10:3,-S(p)*(run?6:4)));add('chest',p=>E(0,S(p)*(run?5:3)));add('head',p=>E(-(run?8:0),-S(p)*3));
     for(const [sd,n] of [[1,'L'],[-1,'R']]){const ph=p=>p+(n==='R'?Math.PI:0);
       add('upperLeg_'+n,p=>E(-la*S(ph(p))));add('lowerLeg_'+n,p=>E(kn*Math.max(0,C(ph(p)))+(run?10:4)*0));add('foot_'+n,p=>E(-12*Math.max(0,C(ph(p)))));
-      add('upperArm_'+n,p=>({e:[as*S(ph(p)),0,baseZ(sd)]}));add('lowerArm_'+n,p=>({e:elbow(sd,run?80:15)}));}
+      add('upperArm_'+n,p=>({e:[as*S(ph(p)),0,0],b:[0,0,baseZ(sd)]}));add('lowerArm_'+n,p=>({e:elbow(sd,run?80:15)}));}
   }
   if(kind==='wave'){
     add('chest',p=>E(0,0,-S(p)*2));add('head',p=>E(0,S(p)*5));
     for(const [sd,n] of [[1,'L'],[-1,'R']]){
-      if(n==='R'){add('upperArm_R',()=>E(0,0,-lift));add('lowerArm_R',p=>E(0,0,S(p*2)*30))}
-      else add('upperArm_L',()=>E(0,0,baseZ(1)))}
+      if(n==='R'){add('upperArm_R',()=>({e:[0,0,0],b:[0,0,-lift]}));add('lowerArm_R',p=>E(0,0,S(p*2)*30))}
+      else add('upperArm_L',()=>({e:[0,0,0],b:[0,0,baseZ(1)]}))}
   }
   if(kind==='jump'){
     const f=u=>u<.3?u/.3:u<.5?1-(u-.3)/.2:0,air=u=>u>=.3&&u<=.85?S((u-.3)/.55*Math.PI):0;
     add('hips',(p,u)=>E(0,0,0,[0,H*(.35*air(u)-.09*f(u)),0]));add('spine',(p,u)=>E(25*f(u)));
     for(const n of ['L','R']){add('upperLeg_'+n,(p,u)=>E(-(50*f(u)+30*air(u))));add('lowerLeg_'+n,(p,u)=>E(75*f(u)+45*air(u)));
-      add('upperArm_'+n,(p,u)=>({e:[(f(u)*40-air(u)*110)*(n==='L'?1:1),0,baseZ(n==='L'?1:-1)]}))}
+      add('upperArm_'+n,(p,u)=>({e:[f(u)*40-air(u)*110,0,0],b:[0,0,baseZ(n==='L'?1:-1)]}))}
   }
   let nm=kind,i=1;while(clips.some(c=>c.name===nm))nm=kind+(++i);
   const c={name:nm,dur,tr};clips.push(c);if(!silent){cur=c;t=0}return c;
@@ -297,16 +318,16 @@ $('tt').oninput=e=>{t=+e.target.value;playing=false;$('play').textContent='Play'
 $('play').onclick=()=>{if(!cur)return;playing=!playing;if(playing&&t>=cur.dur)t=0;$('play').textContent=playing?'Pause':'Play'};
 $('clips').onchange=e=>{cur=clips[+e.target.value];t=0;playing=false;$('play').textContent='Play';syncClip();syncTime();applyPose();syncSliders();ticks()};
 $('cname').onchange=e=>{if(cur){cur.name=e.target.value.trim()||cur.name;refresh()}};
-$('cdur').onchange=e=>{const d=Math.max(.1,+e.target.value||cur.dur);if(!cur)return;const f=d/cur.dur;for(const n in cur.tr)cur.tr[n].forEach(k=>k.t*=f);cur.dur=d;t=Math.min(t*f,d);refresh()};
+$('cdur').onchange=e=>{if(!cur)return;const d=Math.max(.1,+e.target.value||cur.dur);const f=d/cur.dur;for(const n in cur.tr)cur.tr[n].forEach(k=>k.t*=f);cur.dur=d;t=Math.min(t*f,d);refresh()};
 $('cdel').onclick=()=>{if(!cur)return;clips.splice(clips.indexOf(cur),1);cur=clips[0]||null;t=0;refresh()};
 document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{if(!root)return status('Load a model first');if(!bones.length)return status('Auto rig the model first');addPreset(b.dataset.p);refresh()});
 $('skel').onchange=e=>{if(helper)helper.visible=e.target.checked};
 $('load').onclick=()=>$('file').click();
 $('file').onchange=e=>{const f=e.target.files[0];if(f)f.arrayBuffer().then(loadBuf);e.target.value=''};
-$('rig').onclick=()=>{if(bones.length&&root&&!root.name.startsWith('Ritmator')&&!confirm('This model already has a skeleton. Auto rig will replace it with a new humanoid rig. Continue?'))return;setTimeout(autoRig,30);status('Rigging...')};
+$('rig').onclick=()=>{if(bones.length&&root&&!root.name.startsWith('Ritmator')&&!confirm('This model already has a skeleton. Auto rig will replace it with a new humanoid rig. Continue?'))return;status('Rigging...');setTimeout(autoRig,30)};
 const vpEl=$('vp');
-vpEl.ondragover=e=>e.preventDefault();
-vpEl.ondrop=e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)f.arrayBuffer().then(loadBuf)};
+['dragover','drop'].forEach(ev=>window.addEventListener(ev,e=>e.preventDefault()));
+vpEl.ondrop=e=>{const f=e.dataTransfer.files[0];if(f)f.arrayBuffer().then(loadBuf)};
 
 /* ---------- export ---------- */
 const LOADER='function loadRitmator(loader, onDone) {\n  const s = atob(RITMATOR_DATA), u = new Uint8Array(s.length);\n  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);\n  loader.parse(u.buffer, "", gltf => {\n    const mixer = new THREE.AnimationMixer(gltf.scene), actions = {};\n    gltf.animations.forEach(c => actions[c.name] = mixer.clipAction(c));\n    onDone({ scene: gltf.scene, mixer: mixer, actions: actions, clips: gltf.animations });\n  });\n}\n';
@@ -315,8 +336,14 @@ function buildGLB(){
   return new Promise((res,rej)=>{
     if(!root||!bones.length)return rej('Load and rig a model first');
     if(!clips.length)return rej('Add at least one clip first');
-    const names=clips.map(c=>c.name.replace(/[^\w-]/g,'_'));
-    new T.GLTFExporter().parse(root,r=>res({buf:r,names}),e=>rej('Export failed'),{binary:true,animations:clips.map(toClip),onlyVisible:false});
+    const names=clips.map(c=>c.name.replace(/[^\w-]/g,'_')),anims=clips.map(toClip);
+    // export in rest pose with clean userData, then restore
+    const saved=bones.map(b=>[b.userData,b.quaternion.clone(),b.position.clone()]);
+    bones.forEach((b,i)=>{b.quaternion.copy(b.userData.rest);b.position.copy(b.userData.rpos);b.userData={}});
+    root.updateMatrixWorld(true);
+    const restore=()=>{bones.forEach((b,i)=>{b.userData=saved[i][0];b.quaternion.copy(saved[i][1]);b.position.copy(saved[i][2])});root.updateMatrixWorld(true)};
+    try{new T.GLTFExporter().parse(root,r=>{restore();res({buf:r,names})},e=>{restore();rej('Export failed')},{binary:true,animations:anims,onlyVisible:false})}
+    catch(e){restore();rej('Export failed')}
   });
 }
 function code(b,names){
@@ -325,12 +352,14 @@ function code(b,names){
 }
 function player(b,names){
   const js=code(b,names)+'const R=new THREE.WebGLRenderer({antialias:true});R.setSize(innerWidth,innerHeight);document.body.appendChild(R.domElement);\nconst S=new THREE.Scene(),C=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,.01,1000);\nS.add(new THREE.HemisphereLight(0xffffff,0x444444,1.2));const L=new THREE.DirectionalLight(0xffffff,1.5);L.position.set(3,5,4);S.add(L);\nlet rig=null;const clock=new THREE.Clock();\nloadRitmator(new THREE.GLTFLoader(),r=>{rig=r;S.add(r.scene);const bb=new THREE.Box3().setFromObject(r.scene),sz=bb.getSize(new THREE.Vector3()),ct=bb.getCenter(new THREE.Vector3());C.position.set(ct.x,ct.y,ct.z+Math.max(sz.x,sz.y)*1.8);C.lookAt(ct);const n=Object.keys(r.actions);if(n.length)r.actions[n[0]].play();\naddEventListener("keydown",e=>{const k=n[+e.key-1];if(k){Object.values(r.actions).forEach(a=>a.stop());r.actions[k].reset().play()}})});\nR.setAnimationLoop(()=>{if(rig)rig.mixer.update(clock.getDelta());R.render(S,C)});\n';
-  const u='https://cdn.jsdelivr.net/npm/three@0.147.0/';
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ritmator preview</title><style>html,body{margin:0;height:100%;background:#151515;overflow:hidden}</style></head><body><script src="'+u+'build/three.min.js"><\/script><script src="'+u+'examples/js/loaders/GLTFLoader.js"><\/script><script>'+js+'<\/script></body></html>';
+  const esc=x=>x.replace(/<\/(script)/gi,'<\\/$1'),head='<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ritmator preview</title><style>html,body{margin:0;height:100%;background:#151515;overflow:hidden}</style></head><body>';
+  if(window.__LIBS)return head+'<script>'+esc(window.__LIBS.three)+'<\/script><script>'+esc(window.__LIBS.loader)+'<\/script><script>'+esc(js)+'<\/script></body></html>';
+  const boot='(function(){var B=["https://cdn.jsdelivr.net/npm/three@0.147.0/","https://unpkg.com/three@0.147.0/"],F=["build/three.min.js","examples/js/loaders/GLTFLoader.js"];function L(s){return new Promise(function(o,n){var e=document.createElement("script");e.src=s;e.onload=o;e.onerror=n;document.head.appendChild(e)})}(async function(){for(var i=0;i<B.length;i++){try{for(var j=0;j<F.length;j++)await L(B[i]+F[j]);break}catch(e){}}if(!window.THREE){document.body.textContent="Could not load Three.js (offline?)";return}(0,eval)(document.getElementById("ritmator-main").textContent)})()})();';
+  return head+'<script id="ritmator-main" type="text/plain">'+esc(js)+'<\/script><script>'+boot+'<\/script></body></html>';
 }
 async function saveFile(name,text){
   try{const dl=window.claude&&await claude.use('downloads');if(dl){await dl.save({filename:name,data:text});return}}catch(e){if(e&&e.code==='declined')return}
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text]));a.download=name;document.body.appendChild(a);a.click();a.remove();
+  const a=document.createElement('a');const u=URL.createObjectURL(new Blob([text],{type:'text/plain'}));a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);
 }
 async function copyText(s){
   try{await navigator.clipboard.writeText(s);return true}catch(e){}
@@ -351,15 +380,27 @@ init();refresh();
 </script>
 <script>
 (function(){
+/* Loads Three.js r147 (classic builds). Order: already inlined -> ./lib/ next to this file -> CDNs.
+   Use build-standalone.mjs to bake everything into one offline file. */
 var files=['build/three.min.js','examples/js/loaders/GLTFLoader.js','examples/js/controls/OrbitControls.js','examples/js/exporters/GLTFExporter.js'];
-var bases=['https://cdn.jsdelivr.net/npm/three@0.147.0/','https://unpkg.com/three@0.147.0/'];
-function load(src){return new Promise(function(ok,no){var s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=function(){no(src)};document.head.appendChild(s)})}
+var flat=['three.min.js','GLTFLoader.js','OrbitControls.js','GLTFExporter.js'];
+var sources=[
+  {name:'local lib/',urls:flat.map(function(f){return 'lib/'+f})},
+  {name:'jsDelivr',urls:files.map(function(f){return 'https://cdn.jsdelivr.net/npm/three@0.147.0/'+f})},
+  {name:'unpkg',urls:files.map(function(f){return 'https://unpkg.com/three@0.147.0/'+f})}
+];
+var st=document.getElementById('st');
+function load(src){return new Promise(function(ok,no){var s=document.createElement('script');s.src=src;s.onload=function(){ok()};s.onerror=function(){s.remove();no(src)};document.head.appendChild(s)})}
+function ready(){return window.THREE&&THREE.GLTFLoader&&THREE.OrbitControls&&THREE.GLTFExporter}
 async function go(){
-  for(var i=0;i<bases.length;i++){
-    try{for(var j=0;j<files.length;j++)await load(bases[i]+files[j]);window.__boot();return}
-    catch(e){console.error('Load failed',e)}
+  if(ready()){window.__boot();return}
+  for(var i=0;i<sources.length;i++){
+    st.textContent='Loading Three.js from '+sources[i].name+'...';
+    try{for(var j=0;j<sources[i].urls.length;j++)await load(sources[i].urls[j]);if(ready()){window.__boot();return}}
+    catch(e){console.warn('Three.js load failed from '+sources[i].name,e)}
   }
-  document.getElementById('st').textContent='Could not load Three.js. Check your internet connection, or whether jsdelivr and unpkg are blocked.';
+  st.style.pointerEvents='auto';
+  st.innerHTML='Could not load Three.js (needs internet the first time).<br>Fix: run <b>node build-standalone.mjs</b> to make an offline file, or put three.min.js, GLTFLoader.js, OrbitControls.js and GLTFExporter.js (three r147, examples/js) in a folder named <b>lib</b> next to this file.';
 }
 go();
 })();
