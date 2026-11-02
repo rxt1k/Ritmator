@@ -6,6 +6,8 @@ Ritmator is a browser-based 3D animation tool built with **Three.js** that allow
 
 Designed for creators, game developers, and 3D enthusiasts who want a simple way to rig and animate GLB models without relying on heavyweight 3D software.
 
+<img width="1920" height="950" alt="image" src="https://github.com/user-attachments/assets/94041060-5b81-420f-b7d5-35ed646988d1" />
+
 <img width="1920" height="953" alt="image" src="https://github.com/user-attachments/assets/e2bf1247-ede2-4c8d-a132-a2fa36aac409" />
 
 <img width="1920" height="961" alt="image" src="https://github.com/user-attachments/assets/ade17849-44ff-44d5-a8b5-2dfff9802fbe" />
