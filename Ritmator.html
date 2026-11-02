@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ritmator</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#eeeeeb;--pn:#fafaf8;--ln:#d2d2cd;--tx:#1b1b19;--mu:#6c6c66;--ac:#b4400f;--vp:#dcdcd8;--gr:#b9b9b3;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121212;--pn:#1b1b1a;--ln:#303030;--tx:#e6e6e2;--mu:#8b8b85;--ac:#e07a38;--vp:#0f0f0f;--gr:#3a3a38;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121212;--pn:#1b1b1a;--ln:#303030;--tx:#e6e6e2;--mu:#8b8b85;--ac:#e07a38;--vp:#0f0f0f;--gr:#3a3a38;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:grid;grid-template-columns:268px 1fr 268px;grid-template-rows:1fr auto;overflow:hidden}
+aside{background:var(--pn);border:0 solid var(--ln);overflow-y:auto;padding:14px}
+#L{border-right-width:1px}#R{border-left-width:1px}
+h1{font-size:15px;letter-spacing:.18em;margin:0 0 14px;font-weight:700}
+h2{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);margin:18px 0 8px;font-weight:600}
+label{display:block;color:var(--mu);margin:8px 0 3px}
+button,select,input[type=text],input[type=number]{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--ln);border-radius:4px;padding:6px 8px;width:100%}
+button{cursor:pointer;text-align:center}
+button:hover{border-color:var(--mu)}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}
+.row{display:flex;gap:6px;margin-top:6px}.row>*{flex:1;min-width:0}
+.chk{display:flex;gap:6px;align-items:center;color:var(--tx);margin:8px 0 0}.chk input{width:auto}
+#vp{position:relative;background:var(--vp);min-height:0;min-width:0}
+#vp canvas{position:absolute;left:0;top:0;display:block}
+#st{position:absolute;left:12px;bottom:10px;color:var(--mu);pointer-events:none}
+#tl{grid-column:1/4;background:var(--pn);border-top:1px solid var(--ln);padding:10px 14px;display:grid;grid-template-columns:auto auto 1fr auto;gap:12px;align-items:center}
+#tl button{width:72px}
+#tw{position:relative}
+#tw input{width:100%;margin:0;accent-color:var(--ac)}
+#ticks{position:relative;height:12px;margin:2px 8px 0}
+#ticks i{position:absolute;top:0;width:2px;height:12px;background:var(--ac);transform:translateX(-1px);cursor:pointer}
+.sl{display:grid;grid-template-columns:16px 1fr 44px;gap:8px;align-items:center;margin-top:6px}
+.sl input[type=range]{width:100%;accent-color:var(--ac)}
+.sl span:last-child{text-align:right;color:var(--mu);font-variant-numeric:tabular-nums}
+#info{color:var(--mu);margin-top:8px}
+@media (max-width:820px){body{grid-template-columns:1fr;grid-template-rows:46vh auto auto auto;overflow:auto;height:auto}
+html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;grid-template-columns:auto auto 1fr}#L{grid-row:3;border:0}#R{grid-row:4;border:0}#tw{grid-column:1/4}#tl>span:last-child{grid-column:3}}
+</style>
+</head>
+<body>
+<aside id="L">
+<h1>RITMATOR</h1>
+<h2>Model</h2>
+<input type="file" id="file" accept=".glb,.gltf" hidden>
+<button class="p" id="load">Load GLB</button>
+<label>Arm pose of the model</label>
+<select id="arms"><option value="T">T-pose</option><option value="A">A-pose</option><option value="D">Arms down</option></select>
+<div class="row"><button id="rig">Auto rig</button></div>
+<label class="chk"><input type="checkbox" id="skel" checked>Show skeleton</label>
+<div id="info">No model loaded</div>
+<h2>Clips</h2>
+<select id="clips"></select>
+<label>Name</label><input type="text" id="cname">
+<div class="row"><div><label>Duration (s)</label><input type="number" id="cdur" min="0.1" step="0.1"></div><div><label>Intensity</label><input type="number" id="int" min="0.1" max="3" step="0.1" value="1"></div></div>
+<div class="row"><button data-p="idle">Idle</button><button data-p="walk">Walk</button><button data-p="run">Run</button></div>
+<div class="row"><button data-p="wave">Wave</button><button data-p="jump">Jump</button><button data-p="empty">Empty</button></div>
+<div class="row"><button id="cdel">Delete clip</button></div>
+</aside>
+<div id="vp"><div id="st">Load a .glb file, or drop it here</div></div>
+<aside id="R">
+<h2>Bone</h2>
+<select id="bone"></select>
+<div class="sl"><span>X</span><input type="range" id="rx" min="-180" max="180" step="1" value="0"><span id="vx">0</span></div>
+<div class="sl"><span>Y</span><input type="range" id="ry" min="-180" max="180" step="1" value="0"><span id="vy">0</span></div>
+<div class="sl"><span>Z</span><input type="range" id="rz" min="-180" max="180" step="1" value="0"><span id="vz">0</span></div>
+<label class="chk"><input type="checkbox" id="auto" checked>Auto key on change</label>
+<div class="row"><button id="setk">Set key</button><button id="delk">Delete key</button></div>
+<div class="row"><button id="clrb">Clear bone keys</button></div>
+<h2>Export</h2>
+<div class="row"><button class="p" id="copy">Copy code</button></div>
+<div class="row"><button id="dlt">Code .txt</button><button id="dlh">Player .html</button></div>
+<div id="info2" class="chk" style="color:var(--mu)">Exports every clip in the list</div>
+</aside>
+<div id="tl">
+<button id="play">Play</button>
+<label class="chk" style="margin:0"><input type="checkbox" id="loop" checked>Loop</label>
+<div id="tw"><input type="range" id="tt" min="0" max="1" step="0.001" value="0"><div id="ticks"></div></div>
+<span id="tlab">0.00 / 0.00</span>
+</div>
+
+<script>
+window.__boot=function(){
+const $=id=>document.getElementById(id),T=THREE,D=Math.PI/180;
+let scene,cam,ren,ctrl,grid,root=null,helper=null,bones=[],bmap={},clips=[],cur=null,t=0,playing=false,H=1,armMode='T',last=0;
+const _q=new T.Quaternion(),_e=new T.Euler(),_v=new T.Vector3();
+const status=s=>$('st').textContent=s;
+
+/* ---------- viewport ---------- */
+function init(){
+  const vp=$('vp');
+  ren=new T.WebGLRenderer({antialias:true});ren.setPixelRatio(Math.min(devicePixelRatio,2));vp.appendChild(ren.domElement);
+  scene=new T.Scene();cam=new T.PerspectiveCamera(45,1,.01,2000);cam.position.set(0,1.5,4);
+  scene.add(new T.HemisphereLight(0xffffff,0x555555,1.1));
+  const dl=new T.DirectionalLight(0xffffff,1.4);dl.position.set(3,6,4);scene.add(dl);
+  ctrl=new T.OrbitControls(cam,ren.domElement);ctrl.enableDamping=true;
+  const clear=()=>ren.setClearColor(getComputedStyle(document.documentElement).getPropertyValue('--vp').trim()||'#dcdcd8');
+  clear();matchMedia('(prefers-color-scheme:dark)').addEventListener('change',clear);
+  new ResizeObserver(()=>{const w=vp.clientWidth,h=vp.clientHeight;if(!w||!h)return;ren.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix()}).observe(vp);
+  frame();
+  ren.setAnimationLoop(loop);
+}
+function frame(){
+  if(grid){scene.remove(grid)}
+  let c=new T.Vector3(0,.9,0),s=new T.Vector3(1,1.8,1),y=0;
+  if(root){const b=new T.Box3().setFromObject(root);b.getSize(s);b.getCenter(c);y=b.min.y}
+  grid=new T.GridHelper(Math.max(s.x,s.y,s.z)*3,20,0x888888,0x888888);grid.position.y=y;grid.material.opacity=.35;grid.material.transparent=true;scene.add(grid);
+  const d=Math.max(s.x,s.y,s.z)*1.9;cam.position.set(c.x,c.y+s.y*.1,c.z+d);ctrl.target.copy(c);cam.near=d/200;cam.far=d*50;cam.updateProjectionMatrix();ctrl.update();
+}
+function loop(now){
+  const dt=Math.min((now-last)/1000,.1);last=now;
+  if(playing&&cur){t+=dt;if(t>=cur.dur){if($('loop').checked)t%=cur.dur;else{t=cur.dur;playing=false;$('play').textContent='Play'}}syncTime();applyPose();syncSliders()}
+  ctrl.update();ren.render(scene,cam);
+}
+
+/* ---------- loading ---------- */
+function loadBuf(buf){
+  status('Reading model...');
+  try{new T.GLTFLoader().parse(buf,'',g=>setModel(g.scene),e=>status('Could not read this file. Use a self-contained .glb'))}
+  catch(e){status('Could not read this file. Use a self-contained .glb')}
+}
+function setModel(obj){
+  if(root)scene.remove(root);if(helper){scene.remove(helper);helper=null}
+  root=obj;scene.add(root);root.updateMatrixWorld(true);
+  const b=new T.Box3().setFromObject(root);H=Math.max(b.getSize(new T.Vector3()).y,1e-3);
+  collect();clips=[];cur=null;frame();
+  if(bones.length){addPreset('idle');addPreset('walk');cur=clips[0];status('Existing skeleton found: '+bones.length+' bones. Presets are tuned for the Ritmator auto rig.')}
+  else status('Model loaded without a skeleton. Press Auto rig.');
+  makeHelper();refresh();
+}
+function collect(){
+  bones=[];bmap={};root.traverse(o=>{if(o.isBone)bones.push(o)});
+  bones.forEach(b=>{bmap[b.name]=b;b.userData.rest=b.quaternion.clone();b.userData.rpos=b.position.clone()});
+}
+function makeHelper(){
+  if(helper){scene.remove(helper);helper=null}
+  if(!bones.length)return;
+  helper=new T.SkeletonHelper(root);helper.material.depthTest=false;helper.renderOrder=10;helper.visible=$('skel').checked;scene.add(helper);
+}
+
+/* ---------- auto rig ---------- */
+function autoRig(){
+  if(!root)return status('Load a model first');
+  armMode=$('arms').value;
+  root.updateMatrixWorld(true);
+  const meshes=[];root.traverse(o=>{if(o.isMesh)meshes.push(o)});
+  if(!meshes.length)return status('No meshes found');
+  status('Rigging...');
+  const box=new T.Box3().setFromObject(root),s=box.getSize(new T.Vector3()),c=box.getCenter(new T.Vector3());
+  const h=s.y,y0=box.min.y,cx=c.x,cz=c.z,hw=s.x/2;
+  const P=(x,f,z=0)=>new T.Vector3(cx+x,y0+f*h,cz+z);
+  const dir={T:[1,0],A:[.7,-.7],D:[.12,-1]}[armMode];
+  const span=armMode==='T'?Math.max(hw-.09*h,.25*h):.36*h;
+  const defs=[['hips',null,P(0,.52),P(0,.6)],['spine','hips',P(0,.6),P(0,.7)],['chest','spine',P(0,.7),P(0,.82)],['neck','chest',P(0,.82),P(0,.86)],['head','neck',P(0,.86),P(0,1)]];
+  for(const [sd,n] of [[1,'L'],[-1,'R']]){
+    const sh=P(sd*.09*h,.78),v=new T.Vector3(sd*dir[0],dir[1],0).normalize(),el=sh.clone().addScaledVector(v,span*.5),wr=sh.clone().addScaledVector(v,span),hd=wr.clone().addScaledVector(v,.08*h),lx=sd*.06*h;
+    defs.push(['upperArm_'+n,'chest',sh,el],['lowerArm_'+n,'upperArm_'+n,el,wr],['hand_'+n,'lowerArm_'+n,wr,hd],
+      ['upperLeg_'+n,'hips',P(lx,.5),P(lx,.28)],['lowerLeg_'+n,'upperLeg_'+n,P(lx,.28),P(lx,.05)],['foot_'+n,'lowerLeg_'+n,P(lx,.05),P(lx,.02,.1*h)]);
+  }
+  const rig=new T.Group();rig.name='RitmatorRig';const mk={},bl=[];
+  defs.forEach(([n,p,hd,tl])=>{const b=new T.Bone();b.name=n;b.userData.head=hd;b.userData.tail=tl;b.position.copy(hd).sub(p?mk[p].userData.head:new T.Vector3());(p?mk[p]:rig).add(b);mk[n]=b;bl.push(b)});
+  rig.updateMatrixWorld(true);
+  const skel=new T.Skeleton(bl),segs=bl.map(b=>[b.userData.head,b.userData.tail]);
+  const ab=new T.Vector3(),ap=new T.Vector3(),q=new T.Vector3(),v=new T.Vector3();
+  const dist=(p,a,b)=>{ab.subVectors(b,a);ap.subVectors(p,a);const l=ab.lengthSq(),k=l?Math.min(1,Math.max(0,ap.dot(ab)/l)):0;return q.copy(a).addScaledVector(ab,k).distanceTo(p)};
+  meshes.forEach((m,mi)=>{
+    const g=m.geometry.clone();g.applyMatrix4(m.matrixWorld);
+    const pos=g.attributes.position,n=pos.count,si=new Uint16Array(n*4),sw=new Float32Array(n*4),eps=.002*h;
+    for(let i=0;i<n;i++){
+      v.fromBufferAttribute(pos,i);
+      const d=segs.map((sg,j)=>[dist(v,sg[0],sg[1]),j]).sort((a,b)=>a[0]-b[0]).slice(0,3);
+      const w=d.map(x=>1/Math.pow(x[0]+eps,3)),sum=w[0]+w[1]+w[2];
+      for(let k=0;k<3;k++){si[i*4+k]=d[k][1];sw[i*4+k]=w[k]/sum}
+    }
+    g.setAttribute('skinIndex',new T.Uint16BufferAttribute(si,4));g.setAttribute('skinWeight',new T.Float32BufferAttribute(sw,4));
+    const sm=new T.SkinnedMesh(g,m.material);sm.name=m.name||('mesh'+mi);rig.add(sm);
+    sm.bind(skel,new T.Matrix4());
+  });
+  scene.remove(root);if(helper)scene.remove(helper);
+  root=rig;scene.add(root);root.updateMatrixWorld(true);
+  collect();clips=[];addPreset('idle');addPreset('walk');cur=clips[0];t=0;makeHelper();refresh();
+  status('Rigged: '+bones.length+' bones. Add animations on the left, edit poses on the right.');
+}
+
+/* ---------- animation data ---------- */
+function find(k){
+  if(bmap[k])return k;
+  const PR={hips:/hip|pelvis/,spine:/spine$|spine0?1$/,chest:/chest|spine0?2$/,neck:/neck/,head:/head/,upperArm:/upper_?arm|(^|[^a-z])arm/,lowerArm:/fore_?arm|lower_?arm/,hand:/hand/,upperLeg:/up_?leg|upper_?leg|thigh/,lowerLeg:/lo(w|wer)_?leg|calf|shin/,foot:/foot/};
+  const [p,sd]=k.split('_'),re=PR[p];if(!re)return null;
+  const m=bones.filter(b=>{const n=b.name.toLowerCase();
+    if(!re.test(n))return false;
+    if(p==='head'&&/end|top/.test(n))return false;
+    if(p==='upperArm'&&/fore|lower/.test(n))return false;
+    if(!sd)return true;
+    return sd==='L'?/left|[._:]l($|[._])|l$/.test(n):/right|[._:]r($|[._])|r$/.test(n)});
+  return m.length?m[0].name:null;
+}
+function addPreset(kind,silent){
+  const k=parseFloat($('int').value)||1,N=12,dur={idle:3,walk:1,run:.7,wave:2,jump:1.2,empty:2}[kind],tr={};
+  const baseZ=sd=>sd*({T:-70,A:0,D:0}[armMode]),lift={T:70,A:105,D:150}[armMode];
+  const add=(key,fn)=>{const nm=find(key);if(!nm)return;tr[nm]=[];for(let i=0;i<=N;i++){const r=fn(i/N*Math.PI*2,i/N),o={t:dur*i/N,e:r.e.map(x=>x*k)};if(r.p)o.p=r.p.map(x=>x*k);tr[nm].push(o)}};
+  const E=(x=0,y=0,z=0,p)=>({e:[x,y,z],p}),S=Math.sin,C=Math.cos;
+  const elbow=(sd,a)=>armMode==='T'?[0,-sd*a,0]:[-a,0,0];
+  if(kind==='idle'){
+    add('hips',p=>E(0,S(p)*1.2,0,[0,H*.004*S(p*2),0]));add('spine',p=>E(S(p)*1.2));add('chest',p=>E(S(p)*2));add('head',p=>E(S(p+1)*2,S(p)*3));
+    for(const [sd,n] of [[1,'L'],[-1,'R']]){add('upperArm_'+n,p=>({e:[S(p+sd)*2,0,baseZ(sd)]}))}
+  }
+  if(kind==='walk'||kind==='run'){
+    const run=kind==='run',la=run?55:30,kn=run?85:45,as=run?45:25;
+    add('hips',(p)=>E(0,S(p)*(run?6:4),0,[0,H*(run?.035:.018)*C(p*2),0]));add('spine',p=>E(run?10:3,-S(p)*(run?6:4)));add('chest',p=>E(0,S(p)*(run?5:3)));add('head',p=>E(-(run?8:0),-S(p)*3));
+    for(const [sd,n] of [[1,'L'],[-1,'R']]){const ph=p=>p+(n==='R'?Math.PI:0);
+      add('upperLeg_'+n,p=>E(-la*S(ph(p))));add('lowerLeg_'+n,p=>E(kn*Math.max(0,C(ph(p)))+(run?10:4)*0));add('foot_'+n,p=>E(-12*Math.max(0,C(ph(p)))));
+      add('upperArm_'+n,p=>({e:[as*S(ph(p)),0,baseZ(sd)]}));add('lowerArm_'+n,p=>({e:elbow(sd,run?80:15)}));}
+  }
+  if(kind==='wave'){
+    add('chest',p=>E(0,0,-S(p)*2));add('head',p=>E(0,S(p)*5));
+    for(const [sd,n] of [[1,'L'],[-1,'R']]){
+      if(n==='R'){add('upperArm_R',()=>E(0,0,-lift));add('lowerArm_R',p=>E(0,0,S(p*2)*30))}
+      else add('upperArm_L',()=>E(0,0,baseZ(1)))}
+  }
+  if(kind==='jump'){
+    const f=u=>u<.3?u/.3:u<.5?1-(u-.3)/.2:0,air=u=>u>=.3&&u<=.85?S((u-.3)/.55*Math.PI):0;
+    add('hips',(p,u)=>E(0,0,0,[0,H*(.35*air(u)-.09*f(u)),0]));add('spine',(p,u)=>E(25*f(u)));
+    for(const n of ['L','R']){add('upperLeg_'+n,(p,u)=>E(-(50*f(u)+30*air(u))));add('lowerLeg_'+n,(p,u)=>E(75*f(u)+45*air(u)));
+      add('upperArm_'+n,(p,u)=>({e:[(f(u)*40-air(u)*110)*(n==='L'?1:1),0,baseZ(n==='L'?1:-1)]}))}
+  }
+  let nm=kind,i=1;while(clips.some(c=>c.name===nm))nm=kind+(++i);
+  const c={name:nm,dur,tr};clips.push(c);if(!silent){cur=c;t=0}return c;
+}
+function sample(tk,tm){
+  if(!tk||!tk.length)return null;if(tm<=tk[0].t)return tk[0];const L=tk[tk.length-1];if(tm>=L.t)return L;
+  let i=0;while(tk[i+1].t<tm)i++;const a=tk[i],b=tk[i+1],f=(tm-a.t)/(b.t-a.t);
+  return{e:a.e.map((x,j)=>x+(b.e[j]-x)*f),p:a.p&&b.p?a.p.map((x,j)=>x+(b.p[j]-x)*f):(a.p||b.p)};
+}
+function applyPose(){
+  if(!root)return;
+  bones.forEach(b=>{b.quaternion.copy(b.userData.rest);b.position.copy(b.userData.rpos)});
+  if(cur)for(const n in cur.tr){
+    const b=bmap[n],s=b&&sample(cur.tr[n],t);if(!s)continue;
+    _e.set(s.e[0]*D,s.e[1]*D,s.e[2]*D,'XYZ');b.quaternion.copy(b.userData.rest).multiply(_q.setFromEuler(_e));
+    if(s.p)b.position.copy(b.userData.rpos).add(_v.fromArray(s.p));
+  }
+  root.updateMatrixWorld(true);
+}
+function toClip(c){
+  const fps=30,n=Math.max(1,Math.round(c.dur*fps)),tracks=[];
+  for(const nm in c.tr){
+    const b=bmap[nm];if(!b||!c.tr[nm].length)continue;const ts=[],qs=[],ps=[];let hp=false;
+    for(let i=0;i<=n;i++){
+      const tt=i*c.dur/n,s=sample(c.tr[nm],tt);ts.push(tt);
+      _e.set(s.e[0]*D,s.e[1]*D,s.e[2]*D,'XYZ');const q=b.userData.rest.clone().multiply(new T.Quaternion().setFromEuler(_e));qs.push(q.x,q.y,q.z,q.w);
+      const r=b.userData.rpos,p=s.p||[0,0,0];if(s.p)hp=true;ps.push(r.x+p[0],r.y+p[1],r.z+p[2]);
+    }
+    tracks.push(new T.QuaternionKeyframeTrack(nm+'.quaternion',ts,qs));if(hp)tracks.push(new T.VectorKeyframeTrack(nm+'.position',ts,ps));
+  }
+  return new T.AnimationClip(c.name.replace(/[^\w-]/g,'_'),c.dur,tracks);
+}
+
+/* ---------- UI ---------- */
+const selBone=()=>$('bone').value;
+function refresh(){
+  $('bone').innerHTML=bones.map(b=>'<option>'+b.name+'</option>').join('');
+  $('clips').innerHTML=clips.map((c,i)=>'<option value="'+i+'">'+c.name+'</option>').join('');
+  if(cur)$('clips').value=clips.indexOf(cur);
+  $('info').textContent=root?(bones.length+' bones, '+clips.length+' clips'):'No model loaded';
+  syncClip();syncTime();applyPose();syncSliders();ticks();
+}
+function syncClip(){$('cname').value=cur?cur.name:'';$('cdur').value=cur?cur.dur:'';$('tt').max=cur?cur.dur:1}
+function syncTime(){$('tt').value=t;$('tlab').textContent=t.toFixed(2)+' / '+(cur?cur.dur:0).toFixed(2)}
+function syncSliders(){
+  const s=cur&&sample(cur.tr[selBone()],t),e=s?s.e:[0,0,0];
+  ['x','y','z'].forEach((a,i)=>{$('r'+a).value=e[i];$('v'+a).textContent=Math.round(e[i])});
+}
+function ticks(){
+  const el=$('ticks');el.innerHTML='';if(!cur)return;
+  (cur.tr[selBone()]||[]).forEach(k=>{const i=document.createElement('i');i.style.left=(k.t/cur.dur*100)+'%';i.title=k.t.toFixed(2)+'s';i.onclick=()=>{t=k.t;playing=false;$('play').textContent='Play';syncTime();applyPose();syncSliders()};el.appendChild(i)});
+}
+function ensureClip(){if(!cur){cur=addPreset('empty');refresh()}return cur}
+function setKey(e){
+  const c=ensureClip(),nm=selBone();if(!nm)return;
+  const tk=c.tr[nm]||(c.tr[nm]=[]),k=tk.find(x=>Math.abs(x.t-t)<.002);
+  if(k)k.e=e;else{tk.push({t:+t.toFixed(3),e});tk.sort((a,b)=>a.t-b.t)}
+  applyPose();ticks();
+}
+const curEuler=()=>['x','y','z'].map(a=>+$('r'+a).value);
+['x','y','z'].forEach(a=>$('r'+a).addEventListener('input',()=>{
+  $('v'+a).textContent=$('r'+a).value;playing=false;$('play').textContent='Play';
+  if($('auto').checked)setKey(curEuler());
+  else{const b=bmap[selBone()];if(b){const e=curEuler();_e.set(e[0]*D,e[1]*D,e[2]*D,'XYZ');b.quaternion.copy(b.userData.rest).multiply(_q.setFromEuler(_e));root.updateMatrixWorld(true)}}
+}));
+$('setk').onclick=()=>setKey(curEuler());
+$('delk').onclick=()=>{if(!cur)return;const tk=cur.tr[selBone()];if(!tk)return;const i=tk.findIndex(x=>Math.abs(x.t-t)<.002);if(i>=0)tk.splice(i,1);applyPose();syncSliders();ticks()};
+$('clrb').onclick=()=>{if(cur){delete cur.tr[selBone()];applyPose();syncSliders();ticks()}};
+$('bone').onchange=()=>{syncSliders();ticks()};
+$('tt').oninput=e=>{t=+e.target.value;playing=false;$('play').textContent='Play';syncTime();applyPose();syncSliders()};
+$('play').onclick=()=>{if(!cur)return;playing=!playing;if(playing&&t>=cur.dur)t=0;$('play').textContent=playing?'Pause':'Play'};
+$('clips').onchange=e=>{cur=clips[+e.target.value];t=0;playing=false;$('play').textContent='Play';syncClip();syncTime();applyPose();syncSliders();ticks()};
+$('cname').onchange=e=>{if(cur){cur.name=e.target.value.trim()||cur.name;refresh()}};
+$('cdur').onchange=e=>{const d=Math.max(.1,+e.target.value||cur.dur);if(!cur)return;const f=d/cur.dur;for(const n in cur.tr)cur.tr[n].forEach(k=>k.t*=f);cur.dur=d;t=Math.min(t*f,d);refresh()};
+$('cdel').onclick=()=>{if(!cur)return;clips.splice(clips.indexOf(cur),1);cur=clips[0]||null;t=0;refresh()};
+document.querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{if(!root)return status('Load a model first');if(!bones.length)return status('Auto rig the model first');addPreset(b.dataset.p);refresh()});
+$('skel').onchange=e=>{if(helper)helper.visible=e.target.checked};
+$('load').onclick=()=>$('file').click();
+$('file').onchange=e=>{const f=e.target.files[0];if(f)f.arrayBuffer().then(loadBuf);e.target.value=''};
+$('rig').onclick=()=>{if(bones.length&&root&&!root.name.startsWith('Ritmator')&&!confirm('This model already has a skeleton. Auto rig will replace it with a new humanoid rig. Continue?'))return;setTimeout(autoRig,30);status('Rigging...')};
+const vpEl=$('vp');
+vpEl.ondragover=e=>e.preventDefault();
+vpEl.ondrop=e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f)f.arrayBuffer().then(loadBuf)};
+
+/* ---------- export ---------- */
+const LOADER='function loadRitmator(loader, onDone) {\n  const s = atob(RITMATOR_DATA), u = new Uint8Array(s.length);\n  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);\n  loader.parse(u.buffer, "", gltf => {\n    const mixer = new THREE.AnimationMixer(gltf.scene), actions = {};\n    gltf.animations.forEach(c => actions[c.name] = mixer.clipAction(c));\n    onDone({ scene: gltf.scene, mixer: mixer, actions: actions, clips: gltf.animations });\n  });\n}\n';
+const b64=buf=>{let s='';const u=new Uint8Array(buf);for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)};
+function buildGLB(){
+  return new Promise((res,rej)=>{
+    if(!root||!bones.length)return rej('Load and rig a model first');
+    if(!clips.length)return rej('Add at least one clip first');
+    const names=clips.map(c=>c.name.replace(/[^\w-]/g,'_'));
+    new T.GLTFExporter().parse(root,r=>res({buf:r,names}),e=>rej('Export failed'),{binary:true,animations:clips.map(toClip),onlyVisible:false});
+  });
+}
+function code(b,names){
+  return '// Ritmator export. Clips: '+names.join(', ')+'\nconst RITMATOR_DATA = "'+b+'";\n'+LOADER+
+  '// Usage:\n// loadRitmator(new THREE.GLTFLoader(), r => { scene.add(r.scene); r.actions["'+names[0]+'"].play(); });\n// then call r.mixer.update(delta) each frame. Switch clips with r.actions[name].reset().play().\n';
+}
+function player(b,names){
+  const js=code(b,names)+'const R=new THREE.WebGLRenderer({antialias:true});R.setSize(innerWidth,innerHeight);document.body.appendChild(R.domElement);\nconst S=new THREE.Scene(),C=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,.01,1000);\nS.add(new THREE.HemisphereLight(0xffffff,0x444444,1.2));const L=new THREE.DirectionalLight(0xffffff,1.5);L.position.set(3,5,4);S.add(L);\nlet rig=null;const clock=new THREE.Clock();\nloadRitmator(new THREE.GLTFLoader(),r=>{rig=r;S.add(r.scene);const bb=new THREE.Box3().setFromObject(r.scene),sz=bb.getSize(new THREE.Vector3()),ct=bb.getCenter(new THREE.Vector3());C.position.set(ct.x,ct.y,ct.z+Math.max(sz.x,sz.y)*1.8);C.lookAt(ct);const n=Object.keys(r.actions);if(n.length)r.actions[n[0]].play();\naddEventListener("keydown",e=>{const k=n[+e.key-1];if(k){Object.values(r.actions).forEach(a=>a.stop());r.actions[k].reset().play()}})});\nR.setAnimationLoop(()=>{if(rig)rig.mixer.update(clock.getDelta());R.render(S,C)});\n';
+  const u='https://cdn.jsdelivr.net/npm/three@0.147.0/';
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ritmator preview</title><style>html,body{margin:0;height:100%;background:#151515;overflow:hidden}</style></head><body><script src="'+u+'build/three.min.js"><\/script><script src="'+u+'examples/js/loaders/GLTFLoader.js"><\/script><script>'+js+'<\/script></body></html>';
+}
+async function saveFile(name,text){
+  try{const dl=window.claude&&await claude.use('downloads');if(dl){await dl.save({filename:name,data:text});return}}catch(e){if(e&&e.code==='declined')return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text]));a.download=name;document.body.appendChild(a);a.click();a.remove();
+}
+async function copyText(s){
+  try{await navigator.clipboard.writeText(s);return true}catch(e){}
+  const ta=document.createElement('textarea');ta.value=s;ta.style.cssText='position:fixed;opacity:0';document.body.appendChild(ta);ta.select();let ok=false;try{ok=document.execCommand('copy')}catch(e){}ta.remove();return ok;
+}
+async function doExport(kind){
+  try{
+    status('Building export...');const {buf,names}=await buildGLB(),b=b64(buf),kb=Math.round(b.length/1024);
+    if(kind==='copy'){const ok=await copyText(code(b,names));status(ok?'Code copied ('+kb+' KB). Paste it into your game.':'Clipboard blocked. Use Code .txt instead.')}
+    if(kind==='txt'){await saveFile('ritmator-model.txt',code(b,names));status('Code ready ('+kb+' KB)')}
+    if(kind==='html'){await saveFile('ritmator-player.html',player(b,names));status('Player ready ('+kb+' KB)')}
+  }catch(e){status(typeof e==='string'?e:'Export failed')}
+}
+$('copy').onclick=()=>doExport('copy');$('dlt').onclick=()=>doExport('txt');$('dlh').onclick=()=>doExport('html');
+
+init();refresh();
+};
+</script>
+<script>
+(function(){
+var files=['build/three.min.js','examples/js/loaders/GLTFLoader.js','examples/js/controls/OrbitControls.js','examples/js/exporters/GLTFExporter.js'];
+var bases=['https://cdn.jsdelivr.net/npm/three@0.147.0/','https://unpkg.com/three@0.147.0/'];
+function load(src){return new Promise(function(ok,no){var s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=function(){no(src)};document.head.appendChild(s)})}
+async function go(){
+  for(var i=0;i<bases.length;i++){
+    try{for(var j=0;j<files.length;j++)await load(bases[i]+files[j]);window.__boot();return}
+    catch(e){console.error('Load failed',e)}
+  }
+  document.getElementById('st').textContent='Could not load Three.js. Check your internet connection, or whether jsdelivr and unpkg are blocked.';
+}
+go();
+})();
+</script>
+</body>
+</html>
