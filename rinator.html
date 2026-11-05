@@ -58,7 +58,7 @@ html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;gr
 <label class="chk"><input type="checkbox" id="refine" checked>Refine joints inside mesh</label>
 <label class="chk"><input type="checkbox" id="autoface" checked>Auto-detect facing</label>
 <h2>Placement</h2>
-<div class="hint" style="margin-top:0">Rotate the model so it faces the green FRONT arrow (+Z), then press Auto rig.</div>
+<div class="hint" style="margin-top:0" id="xhint">Before rigging this moves the whole model: make it face the green FRONT arrow (+Z), then press Auto rig. After rigging it moves ONLY the mesh and the rig stays fixed.</div>
 <div class="sl2"><span>Rotate X</span><input type="range" id="xrx" min="-180" max="180" step="1" value="0"><span id="xrxv">0</span></div>
 <div class="sl2"><span>Rotate Y</span><input type="range" id="xry" min="-180" max="180" step="1" value="0"><span id="xryv">0</span></div>
 <div class="sl2"><span>Rotate Z</span><input type="range" id="xrz" min="-180" max="180" step="1" value="0"><span id="xrzv">0</span></div>
@@ -271,7 +271,7 @@ function setModel(obj){
   root=obj;scene.add(root);root.updateMatrixWorld(true);xfCapture();
   root.traverse(o=>{if(o.isSkinnedMesh)o.frustumCulled=false});
   const b=new T.Box3().setFromObject(root);H=Math.max(b.getSize(new T.Vector3()).y,1e-3);
-  lastJoints=null;stopPlay();undoS=[];redoS=[];
+  lastJoints=null;rigInfo=null;stopPlay();undoS=[];redoS=[];
   collect();clips=[];cur=null;frame();placeArrow();
   if(bones.length){addPreset('idle');addPreset('walk');cur=clips[0];status('Existing skeleton found: '+bones.length+' bones. Presets are tuned for the Ritmator auto rig.')}
   else status('Model loaded without a skeleton. Press Auto rig (or Manual rig to place the joints yourself).');
@@ -301,6 +301,7 @@ function xfUI(){
 }
 function applyXf(){
   if(!root||!xbase)return;
+  if(isRig()&&rigInfo){scheduleReskin();return}
   const R=new T.Matrix4().makeRotationFromEuler(new T.Euler(xf.rx*D,xf.ry*D,xf.rz*D,'YXZ'));
   const M=new T.Matrix4().makeTranslation(xf.px,xf.py,xf.pz)
     .multiply(new T.Matrix4().makeTranslation(xpiv.x,xpiv.y,xpiv.z)).multiply(R)
@@ -312,11 +313,13 @@ function applyXf(){
 function xfGuard(){if(mmode){xfUI();status('Finish the manual rig first (Apply rig or Cancel), then move the model.');return false}if(!root){status('Load a model first');return false}return true}
 function xfSet(k,v){if(!xfGuard())return;xf[k]=v;applyXf();xfUI()}
 function groundIt(){
+  if(isRig()){status('Ground and Fit only work before rigging (they would pull the mesh off the bones). Use the Move sliders to line the mesh up with the rig.');return}
   root.updateMatrixWorld(true);const b=new T.Box3().setFromObject(root),c=b.getCenter(new T.Vector3());
   xf.px-=c.x;xf.pz-=c.z;xf.py-=b.min.y;applyXf();xfUI();
 }
 function fitModel(){
   if(!xfGuard())return;
+  if(isRig()){status('Fit only works before rigging. After rigging use Scale to resize the mesh on the rig.');return}
   root.updateMatrixWorld(true);const h=new T.Box3().setFromObject(root).getSize(new T.Vector3()).y;if(h<1e-6)return;
   xf.s*=1.8/h;applyXf();groundIt();H=1.8;frame();status('Model scaled to 1.8 m tall, centred, feet on the ground.');
 }
@@ -324,7 +327,7 @@ function turnModel(quiet){
   if(!root)return status('Load a model first');
   if(mmode)return xfGuard();
   xf.ry=wrap180(xf.ry+180);applyXf();xfUI();
-  if(!quiet)status(isRig()?'Turned 180 degrees. The rig turned with it, so press Auto rig again to re-fit the rig to the new direction.':'Turned 180 degrees. The model should now face +Z, the way the green FRONT arrow points.');
+  if(!quiet)status(isRig()?'Mesh turned 180 degrees. The rig stayed in place.':'Turned 180 degrees. The model should now face +Z, the way the green FRONT arrow points.');
 }
 function placeArrow(){
   if(!fwd){
@@ -534,37 +537,26 @@ function refineJoints(J,V,iters){
 }
 const buildVox=(meshes)=>{const gs=meshes.map(worldGeom),V=voxelize(gs,+$('wres').value||72);gs.forEach(g=>g.dispose());return V};
 
-/* Builds the humanoid skeleton from joint positions and skins every mesh to it. */
-async function rigFromJoints(J,cx,info,V0){
-  const meshes=getMeshes();if(!meshes.length)return status('No meshes found');
-  root.updateMatrixWorld(true);
-  const bb=new T.Box3().setFromObject(root),h=Math.max(bb.getSize(new T.Vector3()).y,1e-3);
-  H=h;armAng=detectArm(J);setArmSel(armAng);
-  const pw=+$('wpow').value||4;
-  const defs=[['hips',null,'pelvis','spine'],['spine','hips','spine','chest'],['chest','spine','chest','neck'],['neck','chest','neck','head'],['head','neck','head','headTop']];
-  ['L','R'].forEach(n=>defs.push(['upperArm_'+n,'chest','sh_'+n,'el_'+n],['lowerArm_'+n,'upperArm_'+n,'el_'+n,'wr_'+n],['hand_'+n,'lowerArm_'+n,'wr_'+n,'hand_'+n],['upperLeg_'+n,'hips','hip_'+n,'knee_'+n],['lowerLeg_'+n,'upperLeg_'+n,'knee_'+n,'ankle_'+n],['foot_'+n,'lowerLeg_'+n,'ankle_'+n,'toe_'+n]));
-  const rig=new T.Group();rig.name='RitmatorRig';const mk={},hd={},bl=[],heads=[],tails=[];
-  defs.forEach(([n,p,a,b])=>{const bone=new T.Bone();bone.name=n;hd[n]=J[a];bone.position.copy(J[a]).sub(p?hd[p]:new T.Vector3());(p?mk[p]:rig).add(bone);mk[n]=bone;bl.push(bone);heads.push(J[a]);tails.push(J[b])});
-  rig.updateMatrixWorld(true);
-  const skel=new T.Skeleton(bl),nb=bl.length;
+/* Computes skin weights (4 influences per vertex) for world-space geometries against the bone segments. */
+async function computeSkin(gs,heads,tails,h,V0,label){
+  const nb=heads.length,pw=+$('wpow').value||4;
   const A=new Float32Array(nb*3),AB=new Float32Array(nb*3),L2=new Float32Array(nb);
   for(let j=0;j<nb;j++){const a=heads[j],b=tails[j];A.set([a.x,a.y,a.z],j*3);AB.set([b.x-a.x,b.y-a.y,b.z-a.z],j*3);L2[j]=AB[j*3]**2+AB[j*3+1]**2+AB[j*3+2]**2}
-  const gs=meshes.map(worldGeom);
-  status('Building volume...');await tick();
+  status((label||'Rigging')+': building volume...');await tick();
   const V=V0||voxelize(gs,+$('wres').value||72),cell=V.cell,D=[];
   for(let j=0;j<nb;j++){
     D.push(dijkstra(V,boneSeeds(V,heads[j],tails[j]),.35*h));
-    status('Computing skin weights... '+Math.round((j+1)/nb*50)+'%');await tick();
+    status((label||'Rigging')+': computing skin weights... '+Math.round((j+1)/nb*50)+'%');await tick();
   }
   let total=0,done=0;gs.forEach(g=>total+=g.attributes.position.count);
   const eps=.3*cell,bi=[0,0,0,0],bd=[0,0,0,0];
   const ins=(d,j)=>{let k=3;if(d>=bd[3])return;while(k>0&&d<bd[k-1]){bd[k]=bd[k-1];bi[k]=bi[k-1];k--}bd[k]=d;bi[k]=j};
-  for(let mi=0;mi<meshes.length;mi++){
-    const m=meshes[mi],g=gs[mi],pos=g.attributes.position,n=pos.count,si=new Uint16Array(n*4),sw=new Float32Array(n*4);
+  for(let mi=0;mi<gs.length;mi++){
+    const g=gs[mi],pos=g.attributes.position,n=pos.count,si=new Uint16Array(n*4),sw=new Float32Array(n*4);
     for(let i=0;i<n;i++){
       const px=pos.getX(i),py=pos.getY(i),pz=pos.getZ(i),vi=voxNear(V,px,py,pz);
       bd[0]=bd[1]=bd[2]=bd[3]=Infinity;bi[0]=bi[1]=bi[2]=bi[3]=0;
-            if(vi>=0)for(let j=0;j<nb;j++){const d=D[j][vi];if(d<bd[3])ins(d,j)}
+      if(vi>=0)for(let j=0;j<nb;j++){const d=D[j][vi];if(d<bd[3])ins(d,j)}
       if(!isFinite(bd[0])){ // separate piece (eyes, hair...): nearest bone by straight distance
         for(let j=0;j<nb;j++){const j3=j*3,ax=px-A[j3],ay=py-A[j3+1],az=pz-A[j3+2];let k=L2[j]?(ax*AB[j3]+ay*AB[j3+1]+az*AB[j3+2])/L2[j]:0;k=k<0?0:k>1?1:k;
           const d=Math.sqrt((ax-AB[j3]*k)**2+(ay-AB[j3+1]*k)**2+(az-AB[j3+2]*k)**2);if(d<bd[3])ins(d,j)}
@@ -572,18 +564,62 @@ async function rigFromJoints(J,cx,info,V0){
       const lim=bd[0]*3+2*cell;let sum=0;const w=[0,0,0,0];
       for(let k=0;k<4;k++){if(isFinite(bd[k])&&(k===0||bd[k]<=lim)){w[k]=1/Math.pow(bd[k]+eps,pw);sum+=w[k]}}
       for(let k=0;k<4;k++){si[i*4+k]=bi[k];sw[i*4+k]=w[k]/sum}
-      if((++done&16383)===0){status('Computing skin weights... '+(50+Math.round(done/total*50))+'%');await tick()}
+      if((++done&16383)===0){status((label||'Rigging')+': computing skin weights... '+(50+Math.round(done/total*50))+'%');await tick()}
     }
     g.setAttribute('skinIndex',new T.Uint16BufferAttribute(si,4));g.setAttribute('skinWeight',new T.Float32BufferAttribute(sw,4));
-    const sm=new T.SkinnedMesh(g,m.material);sm.name=m.name||('mesh'+mi);sm.frustumCulled=false;rig.add(sm);
-    sm.bind(skel,new T.Matrix4());
+  }
+}
+/* Builds the humanoid skeleton from joint positions and skins every mesh to it. */
+let rigInfo=null; // {J,heads,tails,h,src:[{geo,sm}]} - lets the MESH be moved/rotated later while the rig stays put
+async function rigFromJoints(J,cx,info,V0){
+  const meshes=getMeshes();if(!meshes.length)return status('No meshes found');
+  root.updateMatrixWorld(true);
+  const bb=new T.Box3().setFromObject(root),h=Math.max(bb.getSize(new T.Vector3()).y,1e-3);
+  H=h;armAng=detectArm(J);setArmSel(armAng);
+  const defs=[['hips',null,'pelvis','spine'],['spine','hips','spine','chest'],['chest','spine','chest','neck'],['neck','chest','neck','head'],['head','neck','head','headTop']];
+  ['L','R'].forEach(n=>defs.push(['upperArm_'+n,'chest','sh_'+n,'el_'+n],['lowerArm_'+n,'upperArm_'+n,'el_'+n,'wr_'+n],['hand_'+n,'lowerArm_'+n,'wr_'+n,'hand_'+n],['upperLeg_'+n,'hips','hip_'+n,'knee_'+n],['lowerLeg_'+n,'upperLeg_'+n,'knee_'+n,'ankle_'+n],['foot_'+n,'lowerLeg_'+n,'ankle_'+n,'toe_'+n]));
+  const rig=new T.Group();rig.name='RitmatorRig';const mk={},hd={},bl=[],heads=[],tails=[];
+  defs.forEach(([n,p,a,b])=>{const bone=new T.Bone();bone.name=n;hd[n]=J[a];bone.position.copy(J[a]).sub(p?hd[p]:new T.Vector3());(p?mk[p]:rig).add(bone);mk[n]=bone;bl.push(bone);heads.push(J[a].clone());tails.push(J[b].clone())});
+  rig.updateMatrixWorld(true);
+  const skel=new T.Skeleton(bl);
+  const gs=meshes.map(worldGeom);
+  const src=gs.map(g=>{const c=g.clone();c.deleteAttribute('skinIndex');c.deleteAttribute('skinWeight');return c});
+  await computeSkin(gs,heads,tails,h,V0,'Rigging');
+  const sms=[];
+  for(let mi=0;mi<meshes.length;mi++){
+    const m=meshes[mi],sm=new T.SkinnedMesh(gs[mi],m.material);sm.name=m.name||('mesh'+mi);sm.frustumCulled=false;rig.add(sm);
+    sm.bind(skel,new T.Matrix4());sms.push(sm);
   }
   if(wvOn){$('wview').checked=false;wvSet(false)}
   scene.remove(root);if(helper)scene.remove(helper);
   root=rig;scene.add(root);root.updateMatrixWorld(true);xfCapture();placeArrow();
+  rigInfo={J:cloneJ(J),heads,tails,h,src:src.map((g,i)=>({geo:g,sm:sms[i]}))};
   lastJoints=cloneJ(J);lastCx=cx;undoS=[];redoS=[];
   collect();clips=[];addPreset('idle');addPreset('walk');cur=clips[0];t=0;stopPlay();makeHelper();refresh();applyLight();
-  status('Rigged: '+bones.length+' bones. '+(info||'')+' Joint wrong? Manual rig -> fix -> Apply rig. Rough bends? Smooth weights.');
+  status('Rigged: '+bones.length+' bones. '+(info||'')+' Placement now moves only the MESH (the rig stays). Joint wrong? Manual rig -> fix -> Apply rig.');
+}
+/* After rigging: move/rotate/scale only the mesh, then re-fit the skin to the fixed rig. */
+let reskinTimer=0,reskinPending=false;
+function meshMatrix(){
+  const pv=rigInfo.J.pelvis,R=new T.Matrix4().makeRotationFromEuler(new T.Euler(xf.rx*D,xf.ry*D,xf.rz*D,'YXZ'));
+  return new T.Matrix4().makeTranslation(xf.px,xf.py,xf.pz).multiply(new T.Matrix4().makeTranslation(pv.x,pv.y,pv.z)).multiply(R)
+    .multiply(new T.Matrix4().makeScale(xf.s,xf.s,xf.s)).multiply(new T.Matrix4().makeTranslation(-pv.x,-pv.y,-pv.z));
+}
+function scheduleReskin(){clearTimeout(reskinTimer);status('Mesh moved - re-fitting skin to the rig...');reskinTimer=setTimeout(reskin,160)}
+async function reskin(){
+  if(!rigInfo||!isRig())return;
+  if(rigging){reskinPending=true;return}
+  rigging=true;
+  try{
+    stopPlay();resetRest();
+    if(wvOn){$('wview').checked=false;wvSet(false)}
+    const M=meshMatrix(),gs=rigInfo.src.map(s=>{const g=s.geo.clone();g.applyMatrix4(M);return g});
+    await computeSkin(gs,rigInfo.heads,rigInfo.tails,rigInfo.h,null,'Re-fitting skin');
+    rigInfo.src.forEach((s,i)=>{const old=s.sm.geometry;s.sm.geometry=gs[i];old.dispose()});
+    applyPose();ren.shadowMap.needsUpdate=true;
+    status('Mesh placed. The rig did not move. Rotate / move until the mesh sits on the rig and faces the FRONT arrow.');
+  }catch(e){console.error(e);status('Re-fit failed: '+(e&&e.message||e))}
+  finally{rigging=false;if(reskinPending){reskinPending=false;scheduleReskin()}}
 }
 const confirmReplace=()=>!(bones.length&&root&&!isRig())||confirm('This model already has a skeleton. Rigging will replace it with a new humanoid rig. Continue?');
 async function autoRig(){
@@ -960,7 +996,7 @@ $('demob').onclick=()=>loadDemo($('demo').value,true);
 $('fit').onclick=fitModel;
 ['x','y','z'].forEach(a=>{$('xr'+a).oninput=e=>xfSet('r'+a,+e.target.value);$('xp'+a).oninput=e=>xfSet('p'+a,+e.target.value)});
 $('xs').onchange=e=>xfSet('s',Math.max(.001,+e.target.value||1));
-document.querySelectorAll('[data-xr]').forEach(b=>b.onclick=()=>{if(!xfGuard())return;const k='r'+b.dataset.xr[0],d=+b.dataset.xr.slice(1);xf[k]=wrap180(xf[k]+d);applyXf();xfUI();if(isRig())status('Rotated. If the animation now runs the wrong way for the face, press Auto rig again to re-fit the rig.')});
+document.querySelectorAll('[data-xr]').forEach(b=>b.onclick=()=>{if(!xfGuard())return;const k='r'+b.dataset.xr[0],d=+b.dataset.xr.slice(1);xf[k]=wrap180(xf[k]+d);applyXf();xfUI();});
 $('xground').onclick=()=>{if(xfGuard())groundIt()};
 $('xreset').onclick=()=>{if(!xfGuard())return;xf={rx:0,ry:0,rz:0,px:0,py:0,pz:0,s:1};applyXf();xfUI()};
 $('xarrow').onchange=placeArrow;
