@@ -56,7 +56,21 @@ html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;gr
 <label>Body proportions</label>
 <select id="prop"><option value="auto">Auto (measure the mesh)</option><option value="adult">Adult</option><option value="teen">Teen</option><option value="child">Child</option><option value="chibi">Chibi / cartoon (big head)</option><option value="hero">Heroic (long legs)</option></select>
 <label class="chk"><input type="checkbox" id="refine" checked>Refine joints inside mesh</label>
-<div class="row"><button id="fit">Fit to 1.8 m</button><button id="turn">Turn 180&deg;</button></div>
+<label class="chk"><input type="checkbox" id="autoface" checked>Auto-detect facing</label>
+<h2>Placement</h2>
+<div class="hint" style="margin-top:0">Rotate the model so it faces the green FRONT arrow (+Z), then press Auto rig.</div>
+<div class="sl2"><span>Rotate X</span><input type="range" id="xrx" min="-180" max="180" step="1" value="0"><span id="xrxv">0</span></div>
+<div class="sl2"><span>Rotate Y</span><input type="range" id="xry" min="-180" max="180" step="1" value="0"><span id="xryv">0</span></div>
+<div class="sl2"><span>Rotate Z</span><input type="range" id="xrz" min="-180" max="180" step="1" value="0"><span id="xrzv">0</span></div>
+<div class="sl2"><span>Move X</span><input type="range" id="xpx" min="-5" max="5" step="0.01" value="0"><span id="xpxv">0</span></div>
+<div class="sl2"><span>Move Y</span><input type="range" id="xpy" min="-5" max="5" step="0.01" value="0"><span id="xpyv">0</span></div>
+<div class="sl2"><span>Move Z</span><input type="range" id="xpz" min="-5" max="5" step="0.01" value="0"><span id="xpzv">0</span></div>
+<div class="row" style="align-items:center"><span style="color:var(--mu);flex:0 0 58px">Scale</span><input type="number" id="xs" step="0.05" min="0.001" value="1"></div>
+<div class="row"><button data-xr="y90">Y +90&deg;</button><button data-xr="y-90">Y -90&deg;</button><button data-xr="y180">Y 180&deg;</button></div>
+<div class="row"><button data-xr="x90">X +90&deg;</button><button data-xr="x-90">X -90&deg;</button><button data-xr="z90">Z +90&deg;</button></div>
+<div class="row"><button id="xground">Ground</button><button id="fit">Fit 1.8 m</button><button id="xreset">Reset</button></div>
+<label class="chk"><input type="checkbox" id="xarrow" checked>Show FRONT arrow</label>
+<button id="turn" class="hid">turn</button>
 <div class="row"><button id="rig">Auto rig</button><button id="mrig">Manual rig</button></div>
 <div id="mpanel" class="hid">
 <label>Joint (or click a dot in the view)</label><select id="jsel"></select>
@@ -67,7 +81,7 @@ html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;gr
 </div>
 <h2>Skin</h2>
 <label>Skin quality</label>
-<select id="wres"><option value="80">Fast</option><option value="112" selected>Normal</option><option value="150">High (slow)</option></select>
+<select id="wres"><option value="56">Fast</option><option value="72" selected>Normal</option><option value="100">High (slower)</option></select>
 <label>Weight falloff <span id="wpv">4</span> (higher = sharper joints)</label>
 <input type="range" id="wpow" min="1.5" max="8" step="0.5" value="4" style="width:100%;accent-color:var(--ac)">
 <div class="row"><button id="wsmooth">Smooth weights</button></div>
@@ -139,7 +153,8 @@ let scene,cam,ren,ctrl,tc,grid,root=null,helper=null,bones=[],bmap={},clips=[],c
 let hemi,key,fill,rim,lt,shadowPlane,bgCustom=null,viewC=new T.Vector3(0,.9,0),viewD=1.8;
 let undoS=[],redoS=[],lastSnap={tag:'',time:0},poseClip=null;
 const _q=new T.Quaternion(),_e=new T.Euler(),_v=new T.Vector3();
-const status=s=>$('st').textContent=s;
+let wake=0,uiT=0;const poke=()=>{wake=performance.now()};
+const status=s=>{$('st').textContent=s;poke()};
 const stopPlay=()=>{playing=false;$('play').textContent='Play'};
 const tick=()=>new Promise(r=>setTimeout(r,0));
 const ARMS={T:0,A30:30,A45:45,A60:60,D:85};
@@ -149,7 +164,7 @@ const isRig=()=>!!root&&root.name==='RitmatorRig';
 function init(){
   const vp=$('vp');
   try{ren=new T.WebGLRenderer({antialias:true})}catch(e){status('WebGL is not available in this browser. Enable hardware acceleration or try Chrome/Edge/Firefox.');throw e}
-  ren.setPixelRatio(Math.min(devicePixelRatio,2));vp.appendChild(ren.domElement);
+  ren.setPixelRatio(Math.min(devicePixelRatio,1.5));ren.shadowMap.autoUpdate=false;ren.shadowMap.needsUpdate=true;vp.appendChild(ren.domElement);
   ren.outputEncoding=T.sRGBEncoding;ren.shadowMap.enabled=true;ren.shadowMap.type=T.PCFSoftShadowMap;
   scene=new T.Scene();cam=new T.PerspectiveCamera(45,1,.01,2000);cam.position.set(0,1.5,4);
   hemi=new T.HemisphereLight(0xffffff,0x555555,1);scene.add(hemi);
@@ -162,7 +177,7 @@ function init(){
   tc.addEventListener('objectChange',onJointMove);
   scene.add(tc);
   clearBg();matchMedia('(prefers-color-scheme:dark)').addEventListener('change',clearBg);
-  new ResizeObserver(()=>{const w=vp.clientWidth,h=vp.clientHeight;if(!w||!h)return;ren.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix()}).observe(vp);
+  new ResizeObserver(()=>{const w=vp.clientWidth,h=vp.clientHeight;if(!w||!h)return;ren.setSize(w,h);cam.aspect=w/h;cam.updateProjectionMatrix();poke()}).observe(vp);
   const ray=new T.Raycaster(),ndc=new T.Vector2();
   ren.domElement.addEventListener('pointerdown',e=>{
     if(!mmode||tc.axis)return;
@@ -193,9 +208,15 @@ function setView(name){
 }
 function loop(now){
   const dt=Math.min((now-last)/1000,.1);last=now;
-  if(playing&&cur){t+=dt*speed;if(t>=cur.dur){if($('loop').checked)t%=cur.dur;else{t=cur.dur;stopPlay()}}syncTime();applyPose();syncSliders()}
-  ctrl.update();ren.render(scene,cam);
+  if(rigging)return; // give all CPU to the rig calculation
+  if(playing&&cur){
+    t+=dt*speed;if(t>=cur.dur){if($('loop').checked)t%=cur.dur;else{t=cur.dur;stopPlay()}}
+    applyPose();if(now-uiT>100){uiT=now;syncTime();syncSliders()}
+  }
+  const moved=ctrl.update();
+  if(playing||moved||ctrl.autoRotate||now-wake<1500)ren.render(scene,cam);
 }
+addEventListener('load',()=>['pointerdown','pointermove','wheel','keydown','input','change','click','touchstart'].forEach(ev=>addEventListener(ev,poke,{passive:true,capture:true})));
 
 /* ---------- lighting ---------- */
 const LP={
@@ -218,10 +239,11 @@ function applyLight(){
   const sh=$('lshadow').checked;
   key.castShadow=sh;shadowPlane.visible=sh;
   const sz=viewD*.9,sc=key.shadow.camera;sc.left=-sz;sc.right=sz;sc.top=sz;sc.bottom=-sz;sc.near=.01;sc.far=d*4;sc.updateProjectionMatrix();
-  if(key.shadow.mapSize.x!==2048){key.shadow.mapSize.set(2048,2048);if(key.shadow.map){key.shadow.map.dispose();key.shadow.map=null}}
+  if(key.shadow.mapSize.x!==1024){key.shadow.mapSize.set(1024,1024);if(key.shadow.map){key.shadow.map.dispose();key.shadow.map=null}}
   key.shadow.bias=-.0004;
   if(root)root.traverse(o=>{if(o.isMesh)o.castShadow=sh});
   if(grid)grid.visible=$('lgrid').checked;
+  ren.shadowMap.needsUpdate=true;poke();
   ctrl.autoRotate=$('lspin').checked;
 }
 
@@ -246,11 +268,11 @@ function setModel(obj){
   if(mmode)exitManual();
   if(wvOn){$('wview').checked=false;wvSet(false)}
   if(root)scene.remove(root);if(helper){scene.remove(helper);helper=null}
-  root=obj;scene.add(root);root.updateMatrixWorld(true);
+  root=obj;scene.add(root);root.updateMatrixWorld(true);xfCapture();
   root.traverse(o=>{if(o.isSkinnedMesh)o.frustumCulled=false});
   const b=new T.Box3().setFromObject(root);H=Math.max(b.getSize(new T.Vector3()).y,1e-3);
   lastJoints=null;stopPlay();undoS=[];redoS=[];
-  collect();clips=[];cur=null;frame();
+  collect();clips=[];cur=null;frame();placeArrow();
   if(bones.length){addPreset('idle');addPreset('walk');cur=clips[0];status('Existing skeleton found: '+bones.length+' bones. Presets are tuned for the Ritmator auto rig.')}
   else status('Model loaded without a skeleton. Press Auto rig (or Manual rig to place the joints yourself).');
   makeHelper();refresh();
@@ -265,26 +287,57 @@ function makeHelper(){
   helper=new T.SkeletonHelper(root);helper.material.depthTest=false;helper.renderOrder=10;helper.visible=$('skel').checked&&!mmode;scene.add(helper);
 }
 
-/* ---------- model tools ---------- */
+/* ---------- model placement (rotate / move / scale), also drives the FRONT arrow ---------- */
+let xf={rx:0,ry:0,rz:0,px:0,py:0,pz:0,s:1},xbase=null,xpiv=new T.Vector3(),fwd=null;
+const wrap180=a=>{a=((a+180)%360+360)%360-180;return a};
+function xfCapture(){
+  root.updateMatrix();xbase=root.matrix.clone();
+  root.updateMatrixWorld(true);new T.Box3().setFromObject(root).getCenter(xpiv);
+  xf={rx:0,ry:0,rz:0,px:0,py:0,pz:0,s:1};xfUI();
+}
+function xfUI(){
+  ['x','y','z'].forEach(a=>{$('xr'+a).value=xf['r'+a];$('xr'+a+'v').textContent=Math.round(xf['r'+a]);$('xp'+a).value=xf['p'+a];$('xp'+a+'v').textContent=xf['p'+a].toFixed(2)});
+  $('xs').value=+xf.s.toFixed(4);
+}
+function applyXf(){
+  if(!root||!xbase)return;
+  const R=new T.Matrix4().makeRotationFromEuler(new T.Euler(xf.rx*D,xf.ry*D,xf.rz*D,'YXZ'));
+  const M=new T.Matrix4().makeTranslation(xf.px,xf.py,xf.pz)
+    .multiply(new T.Matrix4().makeTranslation(xpiv.x,xpiv.y,xpiv.z)).multiply(R)
+    .multiply(new T.Matrix4().makeScale(xf.s,xf.s,xf.s)).multiply(new T.Matrix4().makeTranslation(-xpiv.x,-xpiv.y,-xpiv.z)).multiply(xbase);
+  M.decompose(root.position,root.quaternion,root.scale);
+  root.updateMatrixWorld(true);lastJoints=null;placeArrow();
+  if(ren)ren.shadowMap.needsUpdate=true;poke();
+}
+function xfGuard(){if(mmode){xfUI();status('Finish the manual rig first (Apply rig or Cancel), then move the model.');return false}if(!root){status('Load a model first');return false}return true}
+function xfSet(k,v){if(!xfGuard())return;xf[k]=v;applyXf();xfUI()}
+function groundIt(){
+  root.updateMatrixWorld(true);const b=new T.Box3().setFromObject(root),c=b.getCenter(new T.Vector3());
+  xf.px-=c.x;xf.pz-=c.z;xf.py-=b.min.y;applyXf();xfUI();
+}
 function fitModel(){
-  if(!root)return status('Load a model first');
-  if(isRig())return status('Fit the size before rigging (this model is already rigged).');
-  root.updateMatrixWorld(true);
-  let b=new T.Box3().setFromObject(root),h=b.getSize(new T.Vector3()).y;if(h<1e-6)return;
-  root.scale.multiplyScalar(1.8/h);root.updateMatrixWorld(true);
-  b=new T.Box3().setFromObject(root);const c=b.getCenter(new T.Vector3());
-  root.position.x-=c.x;root.position.z-=c.z;root.position.y-=b.min.y;root.updateMatrixWorld(true);
-  H=1.8;lastJoints=null;frame();status('Model scaled to 1.8 m tall, centred, feet on the ground.');
+  if(!xfGuard())return;
+  root.updateMatrixWorld(true);const h=new T.Box3().setFromObject(root).getSize(new T.Vector3()).y;if(h<1e-6)return;
+  xf.s*=1.8/h;applyXf();groundIt();H=1.8;frame();status('Model scaled to 1.8 m tall, centred, feet on the ground.');
 }
 function turnModel(quiet){
   if(!root)return status('Load a model first');
-  if(isRig())return status('Turn the model before rigging (this model is already rigged).');
-  root.updateMatrixWorld(true);
-  const c0=new T.Box3().setFromObject(root).getCenter(new T.Vector3());
-  root.rotation.y+=Math.PI;root.updateMatrixWorld(true);
-  const c1=new T.Box3().setFromObject(root).getCenter(new T.Vector3());
-  root.position.x+=c0.x-c1.x;root.position.z+=c0.z-c1.z;root.updateMatrixWorld(true);
-  lastJoints=null;frame();if(!quiet)status('Model turned 180 degrees. It should now face +Z (toward the front camera).');
+  if(mmode)return xfGuard();
+  xf.ry=wrap180(xf.ry+180);applyXf();xfUI();
+  if(!quiet)status(isRig()?'Turned 180 degrees. The rig turned with it, so press Auto rig again to re-fit the rig to the new direction.':'Turned 180 degrees. The model should now face +Z, the way the green FRONT arrow points.');
+}
+function placeArrow(){
+  if(!fwd){
+    fwd=new T.Group();const c=document.createElement('canvas');c.width=256;c.height=64;const g=c.getContext('2d');
+    g.fillStyle='#1fa35a';g.font='bold 34px system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText('FRONT +Z',128,32);
+    const sp=new T.Sprite(new T.SpriteMaterial({map:new T.CanvasTexture(c),depthTest:false,transparent:true}));sp.scale.set(4,1,1);sp.position.set(0,.15,1.25);sp.renderOrder=40;
+    const ar=new T.ArrowHelper(new T.Vector3(0,0,1),new T.Vector3(0,0,0),1,0x1fa35a,.28,.18);ar.line.material.depthTest=false;ar.cone.material.depthTest=false;ar.renderOrder=40;
+    fwd.add(ar,sp);scene.add(fwd);
+  }
+  fwd.visible=$('xarrow').checked&&!!root;if(!root)return;
+  const b=new T.Box3().setFromObject(root),m=Math.max(b.getSize(new T.Vector3()).y,.1),c=b.getCenter(new T.Vector3());
+  fwd.scale.setScalar(m*.35);fwd.position.set(c.x,b.min.y+m*.003,b.max.z+m*.12);
+  poke();
 }
 
 /* ---------- joints (shared by auto and manual rig) ---------- */
@@ -374,7 +427,7 @@ function estimateJoints(meshes){
 /* estimate, turning the model around first if it faces -Z */
 function estimateAuto(meshes){
   let r=estimateJoints(meshes);
-  if(r.flip&&!isRig()){turnModel(true);r=estimateJoints(meshes);r.info+='. Model faced -Z, so it was turned 180 degrees.'}
+  if(r.flip&&$('autoface').checked){turnModel(true);r=estimateJoints(meshes);r.info+='. Model faced -Z, so it was turned 180 degrees (turn off Auto-detect facing to keep your own rotation).'}
   return r;
 }
 
@@ -407,8 +460,8 @@ function voxelize(geoms,maxDim){
     if(z<nz-1&&!ext[c+sz]&&!surf[c+sz]){ext[c+sz]=1;st[sp++]=c+sz}
   }
   const occ=new Uint8Array(N);for(let i=0;i<N;i++)occ[i]=ext[i]?0:1;
-  const NB=[];for(let dz=-1;dz<=1;dz++)for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)if(dx||dy||dz)NB.push([dx+nx*dy+sz*dz,cell*Math.sqrt(dx*dx+dy*dy+dz*dz)]);
-  return {nx,ny,nz,ox,oy,oz,cell,occ,N,sz,NB,stamp:null,sc:0};
+  const nbo=[],nbc=[];for(let dz=-1;dz<=1;dz++)for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const m=Math.abs(dx)+Math.abs(dy)+Math.abs(dz);if(m===0||m===3)continue;nbo.push(dx+nx*dy+sz*dz);nbc.push(cell*Math.sqrt(m))}
+  return {nx,ny,nz,ox,oy,oz,cell,occ,N,sz,NBo:Int32Array.from(nbo),NBc:Float32Array.from(nbc),stamp:null,sc:0};
 }
 function voxIndex(V,x,y,z){const i=Math.floor((x-V.ox)/V.cell),j=Math.floor((y-V.oy)/V.cell),k=Math.floor((z-V.oz)/V.cell);if(i<0||j<0||k<0||i>=V.nx||j>=V.ny||k>=V.nz)return -1;return i+V.nx*j+V.sz*k}
 function voxNear(V,x,y,z){ // nearest occupied voxel within 2 cells, or -1
@@ -440,14 +493,14 @@ function boneSeeds(V,a,b){
   for(let k=0;k<nz;k++)for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){const id=i+nx*j+sz*k;if(!occ[id])continue;const d=(ox+(i+.5)*cell-mx)**2+(oy+(j+.5)*cell-my)**2+(oz+(k+.5)*cell-mz)**2;if(d<bd){bd=d;best=id}}
   return best<0?[]:[[best,Math.sqrt(bd)]];
 }
-function dijkstra(V,seeds){
-  const {N,occ,NB}=V,dist=new Float32Array(N).fill(Infinity);
-  let cap=1<<16,hd=new Float32Array(cap),hi=new Int32Array(cap),n=0,popD=0;
+function dijkstra(V,seeds,maxD){
+  const {N,occ,NBo,NBc}=V,dist=new Float32Array(N).fill(Infinity),nn=NBo.length;
+  let cap=1<<15,hd=new Float32Array(cap),hi=new Int32Array(cap),n=0,popD=0;
   const push=(d,i)=>{if(n===cap){cap*=2;let a=new Float32Array(cap);a.set(hd);hd=a;let b=new Int32Array(cap);b.set(hi);hi=b}
     let k=n++;while(k>0){const p=(k-1)>>1;if(hd[p]<=d)break;hd[k]=hd[p];hi[k]=hi[p];k=p}hd[k]=d;hi[k]=i};
   const pop=()=>{const d0=hd[0],i0=hi[0];n--;if(n>0){const d=hd[n],i=hi[n];let k=0;for(;;){let c=2*k+1;if(c>=n)break;if(c+1<n&&hd[c+1]<hd[c])c++;if(hd[c]>=d)break;hd[k]=hd[c];hi[k]=hi[c];k=c}hd[k]=d;hi[k]=i}popD=d0;return i0};
   seeds.forEach(([i,d])=>{if(d<dist[i]){dist[i]=d;push(d,i)}});
-  while(n){const i=pop();if(popD>dist[i])continue;for(let q=0;q<NB.length;q++){const j=i+NB[q][0];if(!occ[j])continue;const nd=popD+NB[q][1];if(nd<dist[j]){dist[j]=nd;push(nd,j)}}}
+  while(n){const i=pop();if(popD>dist[i])continue;if(popD>maxD)break;for(let q=0;q<nn;q++){const j=i+NBo[q];if(occ[j]===0)continue;const nd=popD+NBc[q];if(nd<dist[j]){dist[j]=nd;push(nd,j)}}}
   return dist;
 }
 /* Moves limb joints (elbow, wrist, knee) to the centre of the limb's cross-section. */
@@ -479,7 +532,7 @@ function refineJoints(J,V,iters){
     const cap=.08*minL;if(d.length()>cap)d.setLength(cap);j.add(d);
   }
 }
-const buildVox=(meshes)=>{const gs=meshes.map(worldGeom),V=voxelize(gs,+$('wres').value||112);gs.forEach(g=>g.dispose());return V};
+const buildVox=(meshes)=>{const gs=meshes.map(worldGeom),V=voxelize(gs,+$('wres').value||72);gs.forEach(g=>g.dispose());return V};
 
 /* Builds the humanoid skeleton from joint positions and skins every mesh to it. */
 async function rigFromJoints(J,cx,info,V0){
@@ -498,20 +551,20 @@ async function rigFromJoints(J,cx,info,V0){
   for(let j=0;j<nb;j++){const a=heads[j],b=tails[j];A.set([a.x,a.y,a.z],j*3);AB.set([b.x-a.x,b.y-a.y,b.z-a.z],j*3);L2[j]=AB[j*3]**2+AB[j*3+1]**2+AB[j*3+2]**2}
   const gs=meshes.map(worldGeom);
   status('Building volume...');await tick();
-  const V=V0||voxelize(gs,+$('wres').value||112),cell=V.cell,D=[];
+  const V=V0||voxelize(gs,+$('wres').value||72),cell=V.cell,D=[];
   for(let j=0;j<nb;j++){
-    D.push(dijkstra(V,boneSeeds(V,heads[j],tails[j])));
+    D.push(dijkstra(V,boneSeeds(V,heads[j],tails[j]),.35*h));
     status('Computing skin weights... '+Math.round((j+1)/nb*50)+'%');await tick();
   }
   let total=0,done=0;gs.forEach(g=>total+=g.attributes.position.count);
   const eps=.3*cell,bi=[0,0,0,0],bd=[0,0,0,0];
+  const ins=(d,j)=>{let k=3;if(d>=bd[3])return;while(k>0&&d<bd[k-1]){bd[k]=bd[k-1];bi[k]=bi[k-1];k--}bd[k]=d;bi[k]=j};
   for(let mi=0;mi<meshes.length;mi++){
     const m=meshes[mi],g=gs[mi],pos=g.attributes.position,n=pos.count,si=new Uint16Array(n*4),sw=new Float32Array(n*4);
     for(let i=0;i<n;i++){
       const px=pos.getX(i),py=pos.getY(i),pz=pos.getZ(i),vi=voxNear(V,px,py,pz);
       bd[0]=bd[1]=bd[2]=bd[3]=Infinity;bi[0]=bi[1]=bi[2]=bi[3]=0;
-      const ins=(d,j)=>{let k=3;if(d>=bd[3])return;while(k>0&&d<bd[k-1]){bd[k]=bd[k-1];bi[k]=bi[k-1];k--}bd[k]=d;bi[k]=j};
-      if(vi>=0)for(let j=0;j<nb;j++){const d=D[j][vi];if(d<bd[3])ins(d,j)}
+            if(vi>=0)for(let j=0;j<nb;j++){const d=D[j][vi];if(d<bd[3])ins(d,j)}
       if(!isFinite(bd[0])){ // separate piece (eyes, hair...): nearest bone by straight distance
         for(let j=0;j<nb;j++){const j3=j*3,ax=px-A[j3],ay=py-A[j3+1],az=pz-A[j3+2];let k=L2[j]?(ax*AB[j3]+ay*AB[j3+1]+az*AB[j3+2])/L2[j]:0;k=k<0?0:k>1?1:k;
           const d=Math.sqrt((ax-AB[j3]*k)**2+(ay-AB[j3+1]*k)**2+(az-AB[j3+2]*k)**2);if(d<bd[3])ins(d,j)}
@@ -527,7 +580,7 @@ async function rigFromJoints(J,cx,info,V0){
   }
   if(wvOn){$('wview').checked=false;wvSet(false)}
   scene.remove(root);if(helper)scene.remove(helper);
-  root=rig;scene.add(root);root.updateMatrixWorld(true);
+  root=rig;scene.add(root);root.updateMatrixWorld(true);xfCapture();placeArrow();
   lastJoints=cloneJ(J);lastCx=cx;undoS=[];redoS=[];
   collect();clips=[];addPreset('idle');addPreset('walk');cur=clips[0];t=0;stopPlay();makeHelper();refresh();applyLight();
   status('Rigged: '+bones.length+' bones. '+(info||'')+' Joint wrong? Manual rig -> fix -> Apply rig. Rough bends? Smooth weights.');
@@ -793,6 +846,7 @@ function addPreset(kind){
   let nm=kind,i=1;while(clips.some(c=>c.name===nm))nm=kind+(++i);
   const c={name:nm,dur,tr};clips.push(c);cur=c;t=0;return c;
 }
+let smoothOn=true;
 const cr=(p0,p1,p2,p3,f)=>.5*((2*p1)+(-p0+p2)*f+(2*p0-5*p1+4*p2-p3)*f*f+(-p0+3*p1-3*p2+p3)*f*f*f);
 function interp(a,b,p0,p3,f,k){
   const A=a[k],B=b[k];if(!A||!B)return A||B;
@@ -806,15 +860,31 @@ function sample(tk,tm){
   const a=tk[i],b=tk[i+1],f=(tm-a.t)/(b.t-a.t),p0=tk[i-1],p3=tk[i+2];
   return{e:interp(a,b,p0,p3,f,'e'),p:interp(a,b,p0,p3,f,'p')};
 }
+const _o={e:[0,0,0],p:[0,0,0],hp:false};
+function sampleInto(tk,tm,o){
+  const n=tk.length;if(!n)return false;
+  let a,b,f=0,p0=null,p3=null;
+  if(n===1||tm<=tk[0].t)a=b=tk[0];else if(tm>=tk[n-1].t)a=b=tk[n-1];
+  else{let i=0;while(tk[i+1].t<tm)i++;a=tk[i];b=tk[i+1];f=(tm-a.t)/(b.t-a.t);p0=tk[i-1]||null;p3=tk[i+2]||null}
+  const sm=smoothOn&&a!==b;
+  for(let j=0;j<3;j++){const x=a.e[j];o.e[j]=a===b?x:sm?cr((p0||a).e[j],x,b.e[j],(p3||b).e[j],f):x+(b.e[j]-x)*f}
+  let pa=a.p,pb=b.p;o.hp=!!(pa||pb);
+  if(o.hp){if(!pa)pa=pb;if(!pb)pb=pa;
+    const q0=(p0&&p0.p)||pa,q3=(p3&&p3.p)||pb;
+    for(let j=0;j<3;j++){const x=pa[j];o.p[j]=a===b?x:sm?cr(q0[j],x,pb[j],q3[j],f):x+(pb[j]-x)*f}}
+  return true;
+}
 function applyPose(){
   if(!root)return;
-  bones.forEach(b=>{b.quaternion.copy(b.userData.rest);b.position.copy(b.userData.rpos)});
+  for(let i=0;i<bones.length;i++){const b=bones[i];b.quaternion.copy(b.userData.rest);b.position.copy(b.userData.rpos)}
   if(cur)for(const n in cur.tr){
-    const b=bmap[n],s=b&&sample(cur.tr[n],t);if(!s)continue;
-    _e.set(s.e[0]*D,s.e[1]*D,s.e[2]*D,'XYZ');b.quaternion.copy(b.userData.rest).multiply(_q.setFromEuler(_e));
-    if(s.p)b.position.copy(b.userData.rpos).add(_v.fromArray(s.p));
+    const b=bmap[n];if(!b||!sampleInto(cur.tr[n],t,_o))continue;
+    _e.set(_o.e[0]*D,_o.e[1]*D,_o.e[2]*D,'XYZ');b.quaternion.copy(b.userData.rest).multiply(_q.setFromEuler(_e));
+    if(_o.hp)b.position.copy(b.userData.rpos).add(_v.set(_o.p[0],_o.p[1],_o.p[2]));
   }
   root.updateMatrixWorld(true);
+  if(ren)ren.shadowMap.needsUpdate=true;
+  poke();
 }
 function toClip(c){
   const fps=30,n=Math.max(1,Math.round(c.dur*fps)),tracks=[];
@@ -872,7 +942,7 @@ $('bone').onchange=()=>{syncSliders();ticks();wvPaint()};
 $('tt').oninput=e=>{t=+e.target.value;stopPlay();syncTime();applyPose();syncSliders()};
 $('play').onclick=()=>{if(!cur)return;playing=!playing;if(playing&&t>=cur.dur)t=0;$('play').textContent=playing?'Pause':'Play'};
 $('spd').onchange=e=>{speed=+e.target.value};
-$('smooth').onchange=()=>{applyPose();syncSliders()};
+$('smooth').onchange=()=>{smoothOn=$('smooth').checked;applyPose();syncSliders()};
 $('clips').onchange=e=>{cur=clips[+e.target.value];t=0;stopPlay();syncClip();syncTime();applyPose();syncSliders();ticks()};
 $('cname').onchange=e=>{if(cur){snap('');cur.name=e.target.value.trim()||cur.name;refresh()}};
 $('cdur').onchange=e=>{if(!cur)return;snap('');const d=Math.max(.1,+e.target.value||cur.dur),f=d/cur.dur;for(const n in cur.tr)cur.tr[n].forEach(k=>k.t*=f);cur.dur=d;t=Math.min(t*f,d);refresh()};
@@ -888,6 +958,12 @@ $('rig').onclick=()=>{if(!confirmReplace())return;status('Rigging...');setTimeou
 $('mrig').onclick=enterManual;
 $('demob').onclick=()=>loadDemo($('demo').value,true);
 $('fit').onclick=fitModel;
+['x','y','z'].forEach(a=>{$('xr'+a).oninput=e=>xfSet('r'+a,+e.target.value);$('xp'+a).oninput=e=>xfSet('p'+a,+e.target.value)});
+$('xs').onchange=e=>xfSet('s',Math.max(.001,+e.target.value||1));
+document.querySelectorAll('[data-xr]').forEach(b=>b.onclick=()=>{if(!xfGuard())return;const k='r'+b.dataset.xr[0],d=+b.dataset.xr.slice(1);xf[k]=wrap180(xf[k]+d);applyXf();xfUI();if(isRig())status('Rotated. If the animation now runs the wrong way for the face, press Auto rig again to re-fit the rig.')});
+$('xground').onclick=()=>{if(xfGuard())groundIt()};
+$('xreset').onclick=()=>{if(!xfGuard())return;xf={rx:0,ry:0,rz:0,px:0,py:0,pz:0,s:1};applyXf();xfUI()};
+$('xarrow').onchange=placeArrow;
 $('turn').onclick=()=>turnModel(false);
 $('jsel').onchange=e=>{if(mmode)selectJoint(e.target.value)};
 $('jreset').onclick=()=>{if(!mmode)return;exitManual();lastJoints=null;enterManual()};
