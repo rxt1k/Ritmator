@@ -42,6 +42,7 @@ button.p{background:var(--ac);border-color:var(--ac);color:#fff}
 #info{color:var(--mu);margin-top:8px}
 @media (max-width:820px){body{grid-template-columns:1fr;grid-template-rows:46vh auto auto auto;overflow:auto;height:auto}
 html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;grid-template-columns:auto auto auto 1fr}#L{grid-row:3;border:0}#R{grid-row:4;border:0}#tw{grid-column:1/-1;order:5}#tl>span:last-child{grid-column:4;text-align:right}}
+.xc{max-height:110px;overflow:auto;border:1px solid var(--bd,#ccc);border-radius:6px;padding:4px 6px;margin:4px 0}.xc label{display:flex;gap:6px;align-items:center;margin:2px 0;font-size:12px}.xc input{width:auto}
 .pg{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-top:6px}.pg button{padding:6px 2px;font-size:11.5px;line-height:1.15}
 
 </style>
@@ -136,10 +137,15 @@ html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;gr
 <label class="chk"><input type="checkbox" id="lspin">Turntable spin</label>
 <div class="row" style="align-items:center"><span style="color:var(--mu);flex:0 0 auto">Background</span><input type="color" id="bgc" value="#dcdcd8" style="padding:0;height:28px"><button id="bgr" style="flex:0 0 auto;width:auto;padding:6px 8px">Reset</button></div>
 <h2>Export</h2>
+<label>Clips to export</label>
+<div id="xclips" class="xc"></div>
+<label>Compress for web</label>
+<select id="xpre"><option value="web">Web game (small)</option><option value="bal">Balanced</option><option value="orig">Original quality (big)</option></select>
+<div id="xadv" class="hint" style="margin:4px 0"></div>
 <div class="row"><button class="p" id="dlg">Download .glb</button></div>
 <div class="row"><button id="copy">Copy code</button></div>
 <div class="row"><button id="dlt">Code .txt</button><button id="dlh">Player .html</button></div>
-<div id="info2" class="hint">Exports every clip in the list.<br>Shortcuts: Space play/pause, K set key, Delete remove key, Ctrl+Z undo, Ctrl+Y redo.</div>
+<div id="info2" class="hint">Only ticked clips are exported.<br>Shortcuts: Space play/pause, K set key, Delete remove key, Ctrl+Z undo, Ctrl+Y redo.</div>
 </aside>
 <div id="tl">
 <button id="play">Play</button>
@@ -7435,7 +7441,7 @@ else
 
 		if ( canvas.toBlob !== undefined ) {
 
-			return new Promise( resolve => canvas.toBlob( resolve, mimeType ) );
+			return new Promise( resolve => canvas.toBlob( resolve, mimeType, window.__JPQ ) );
 
 		}
 
@@ -8057,7 +8063,7 @@ else
 				min: minMax.min,
 				type: types[ attribute.itemSize ]
 			};
-			if ( attribute.normalized === true ) accessorDef.normalized = true;
+			if ( attribute.normalized === true || attribute._norm === true ) accessorDef.normalized = true;
 			if ( ! json.accessors ) json.accessors = [];
 			return json.accessors.push( accessorDef ) - 1;
 
@@ -10541,7 +10547,20 @@ function applyPose(){
   if(ren)ren.shadowMap.needsUpdate=true;
   poke();
 }
-function toClip(c){
+/* Drop keys that a straight line between neighbours reproduces (within eps). Constant tracks keep first+last key. */
+function reduceTrack(ts,vs,k,eps){
+  const n=ts.length;if(n<3)return[ts,vs];
+  const out=[0];let a=0;
+  for(let i=2;i<n;i++){
+    let ok=true;
+    for(let m=a+1;m<i&&ok;m++){const f=(ts[m]-ts[a])/(ts[i]-ts[a]);for(let j=0;j<k;j++)if(Math.abs(vs[m*k+j]-(vs[a*k+j]+(vs[i*k+j]-vs[a*k+j])*f))>eps){ok=false;break}}
+    if(!ok){out.push(i-1);a=i-1}
+  }
+  out.push(n-1);
+  const T2=out.map(i=>ts[i]),V2=[];out.forEach(i=>{for(let j=0;j<k;j++)V2.push(vs[i*k+j])});
+  return[T2,V2];
+}
+function toClip(c,reduce){
   const fps=30,n=Math.max(1,Math.round(c.dur*fps)),tracks=[];
   for(const nm in c.tr){
     const b=bmap[nm];if(!b||!c.tr[nm].length)continue;const ts=[],qs=[],ps=[];let hp=false;
@@ -10550,7 +10569,10 @@ function toClip(c){
       _e.set(s.e[0]*D,s.e[1]*D,s.e[2]*D,'XYZ');const q=b.userData.rest.clone().multiply(new T.Quaternion().setFromEuler(_e));qs.push(q.x,q.y,q.z,q.w);
       const r=b.userData.rpos,p=s.p||[0,0,0];if(s.p)hp=true;ps.push(r.x+p[0],r.y+p[1],r.z+p[2]);
     }
-    tracks.push(new T.QuaternionKeyframeTrack(nm+'.quaternion',ts,qs));if(hp)tracks.push(new T.VectorKeyframeTrack(nm+'.position',ts,ps));
+    if(reduce){
+      const rq=reduceTrack(ts,qs,4,.0004);tracks.push(new T.QuaternionKeyframeTrack(nm+'.quaternion',rq[0],rq[1]));
+      if(hp){const rp=reduceTrack(ts,ps,3,.0002);tracks.push(new T.VectorKeyframeTrack(nm+'.position',rp[0],rp[1]))}
+    }else{tracks.push(new T.QuaternionKeyframeTrack(nm+'.quaternion',ts,qs));if(hp)tracks.push(new T.VectorKeyframeTrack(nm+'.position',ts,ps))}
   }
   return new T.AnimationClip(c.name.replace(/[^\w-]/g,'_'),c.dur,tracks);
 }
@@ -10612,20 +10634,56 @@ async function loadDemo(kind,auto){
    GLB / code / player export.
    Classic script (no modules): top-level names are shared by every file in js/. */
 /* ---------- export ---------- */
-const LOADER='function loadRitmator(loader, onDone) {\n  const s = atob(RITMATOR_DATA), u = new Uint8Array(s.length);\n  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);\n  loader.parse(u.buffer, "", gltf => {\n    const mixer = new THREE.AnimationMixer(gltf.scene), actions = {};\n    gltf.animations.forEach(c => actions[c.name] = mixer.clipAction(c));\n    onDone({ scene: gltf.scene, mixer: mixer, actions: actions, clips: gltf.animations });\n  });\n}\n';
+const LOADER='async function loadRitmator(loader, onDone) {\n  const s = atob(RITMATOR_DATA), u = new Uint8Array(s.length);\n  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);\n  let buf = u.buffer; // gzip data is unpacked by the browser\n  if (u[0] === 0x1f && u[1] === 0x8b) buf = await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();\n  loader.parse(buf, "", gltf => {\n    const mixer = new THREE.AnimationMixer(gltf.scene), actions = {};\n    gltf.animations.forEach(c => actions[c.name] = mixer.clipAction(c));\n    onDone({ scene: gltf.scene, mixer: mixer, actions: actions, clips: gltf.animations });\n  });\n}\n';
 const b64=buf=>{let s='';const u=new Uint8Array(buf);for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)};
+/* Export presets: texture max size, jpeg quality (0 = keep format), compact mesh data, reduce keys, gzip. */
+const XPRE={web:{tex:1024,jpg:.82,compact:true,reduce:true,gzip:true},bal:{tex:2048,jpg:.9,compact:true,reduce:true,gzip:true},orig:{tex:Infinity,jpg:0,compact:false,reduce:false,gzip:false}};
+const xopts=()=>XPRE[$('xpre').value]||XPRE.web;
+const xskip=new Set();
+function buildXClips(){
+  const el=$('xclips');if(!el)return;el.innerHTML='';
+  clips.forEach(c=>{const l=document.createElement('label'),i=document.createElement('input');i.type='checkbox';i.checked=!xskip.has(c);i.onchange=()=>{i.checked?xskip.delete(c):xskip.add(c)};l.appendChild(i);l.appendChild(document.createTextNode(c.name));el.appendChild(l)});
+}
+function xdesc(){const o=xopts();$('xadv').textContent=o.compact?('Textures max '+o.tex+'px'+(o.jpg?' as JPEG '+Math.round(o.jpg*100)+'%':'')+', compact skin + indices, fewer animation keys'+(o.gzip?', gzip for code export':'')+'.'):'Nothing is changed. Largest files.'}
+const gzip=async buf=>new Response(new Blob([buf]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
 function buildGLB(){
   return new Promise((res,rej)=>{
     if(!root||!bones.length)return rej('Load and rig a model first');
-    if(!clips.length)return rej('Add at least one clip first');
-    const names=clips.map(c=>c.name.replace(/[^\w-]/g,'_')),anims=clips.map(toClip);
+    const sel=clips.filter(c=>!xskip.has(c));
+    if(!sel.length)return rej('Tick at least one clip to export');
+    const o=xopts(),names=sel.map(c=>c.name.replace(/[^\w-]/g,'_')),anims=sel.map(c=>toClip(c,o.reduce));
     // export in rest pose with clean userData, then restore
     exporting=true;
     const saved=bones.map(b=>[b.userData,b.quaternion.clone(),b.position.clone()]);
     bones.forEach((b,i)=>{b.quaternion.copy(b.userData.rest);b.position.copy(b.userData.rpos);b.userData={}});
     root.updateMatrixWorld(true);
-    const restore=()=>{exporting=false;bones.forEach((b,i)=>{b.userData=saved[i][0];b.quaternion.copy(saved[i][1]);b.position.copy(saved[i][2])});root.updateMatrixWorld(true)};
-    try{new T.GLTFExporter().parse(root,r=>{restore();res({buf:r,names})},e=>{restore();rej('Export failed')},{binary:true,animations:anims,onlyVisible:false})}
+    // temporary compact copies of the mesh data / texture formats, undone in restore()
+    const undo=[];
+    if(o.compact||o.jpg)root.traverse(m=>{
+      if(!m.isMesh)return;const g=m.geometry;
+      if(o.compact){
+        const si=g.attributes.skinIndex,sw=g.attributes.skinWeight,ix=g.index;
+        if(si&&sw&&bones.length<256){
+          undo.push(()=>{g.setAttribute('skinIndex',si);g.setAttribute('skinWeight',sw)});
+          const n=si.count,i8=new Uint8Array(n*4),w8=new Uint8Array(n*4);
+          for(let v=0;v<n;v++){
+            let sum=0,big=0;
+            for(let k=0;k<4;k++){i8[v*4+k]=si.array[v*4+k];const q=Math.round(sw.array[v*4+k]*255);w8[v*4+k]=q;sum+=q;if(sw.array[v*4+k]>sw.array[v*4+big])big=k}
+            w8[v*4+big]=Math.max(0,Math.min(255,w8[v*4+big]+255-sum));
+          }
+          g.setAttribute('skinIndex',new T.BufferAttribute(i8,4));
+          const wa=new T.BufferAttribute(w8,4,false);wa._norm=true;g.setAttribute('skinWeight',wa); /* _norm: exporter flags the accessor normalized (getX would otherwise write 0..1 floats as bytes) */
+        }
+        if(ix&&ix.array instanceof Uint32Array&&g.attributes.position.count<65535){undo.push(()=>g.setIndex(ix));g.setIndex(new T.BufferAttribute(new Uint16Array(ix.array),1))}
+      }
+      if(o.jpg)[].concat(m.material).forEach(mt=>{
+        if(!mt||mt.transparent||mt.alphaTest>0)return;
+        ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap'].forEach(k=>{const tx=mt[k];if(tx&&tx.image&&!tx.image.data){const old=tx.userData.mimeType;undo.push(()=>{tx.userData.mimeType=old});tx.userData.mimeType='image/jpeg'}})
+      });
+    });
+    window.__JPQ=o.jpg||undefined;
+    const restore=()=>{exporting=false;window.__JPQ=undefined;undo.forEach(f=>f());bones.forEach((b,i)=>{b.userData=saved[i][0];b.quaternion.copy(saved[i][1]);b.position.copy(saved[i][2])});root.updateMatrixWorld(true)};
+    try{new T.GLTFExporter().parse(root,r=>{restore();res({buf:r,names})},e=>{restore();rej('Export failed')},{binary:true,animations:anims,onlyVisible:false,maxTextureSize:o.tex})}
     catch(e){restore();rej('Export failed')}
   });
 }
@@ -10656,12 +10714,13 @@ async function ensureLibs(){
 async function doExport(kind){
   try{
     if(kind==='html')await ensureLibs();
-    say('Building export...');const was=wvOn;if(was)wvSet(false);let res;try{res=await buildGLB()}finally{if(was)wvSet(true)}const {buf,names}=res,b=b64(buf),kb=Math.round(b.length/1024);
-    if(kind==='copy'){const ok=await copyText(code(b,names));say(ok?'Code copied ('+kb+' KB). Paste it into your game.':'Clipboard blocked. Use Code .txt instead.')}
-    if(kind==='txt'){await saveFile('ritmator-model.txt',code(b,names));say('Code ready ('+kb+' KB)')}
+    say('Building export...');const was=wvOn;if(was)wvSet(false);let res;try{res=await buildGLB()}finally{if(was)wvSet(true)}const {names}=res,o=xopts(),buf=o.gzip?await gzip(res.buf):res.buf,b=b64(buf),kb=Math.round(b.length/1024);
+    if(kind==='copy'){const ok=await copyText(code(b,names));say(ok?'Code copied ('+kb+' KB, '+names.length+' clips). Paste it into your game.':'Clipboard blocked. Use Code .txt instead.')}
+    if(kind==='txt'){await saveFile('ritmator-model.txt',code(b,names));say('Code ready ('+kb+' KB, '+names.length+' clips)')}
     if(kind==='html'){await saveFile('ritmator-player.html',player(b,names));say('Player ready ('+kb+' KB)')}
   }catch(e){say(typeof e==='string'?e:'Export failed')}
 }
+$('xpre').onchange=xdesc;xdesc();
 $('copy').onclick=()=>doExport('copy');$('dlt').onclick=()=>doExport('txt');$('dlh').onclick=()=>doExport('html');
 
 $('dlg').onclick=async()=>{try{say('Building .glb...');const was=wvOn;if(was)wvSet(false);let r;try{r=await buildGLB()}finally{if(was)wvSet(true)}const u=URL.createObjectURL(new Blob([r.buf],{type:'model/gltf-binary'})),a=document.createElement('a');a.href=u;a.download='ritmator-character.glb';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);say('Downloaded ritmator-character.glb ('+Math.round(r.buf.byteLength/1024)+' KB, '+r.names.length+' clips)')}catch(e){say(typeof e==='string'?e:'Export failed')}};
@@ -10680,7 +10739,7 @@ function refresh(){
   $('clips').innerHTML=clips.map((c,i)=>'<option value="'+i+'">'+c.name+'</option>').join('');
   if(cur)$('clips').value=clips.indexOf(cur);
   $('info').textContent=root?(bones.length+' bones, '+clips.length+' clips'):'No model loaded';
-  syncClip();syncTime();applyPose();syncSliders();ticks();
+  syncClip();syncTime();applyPose();syncSliders();ticks();buildXClips();
 }
 function syncClip(){$('cname').value=cur?cur.name:'';$('cdur').value=cur?cur.dur:'';$('tt').max=cur?cur.dur:1}
 function syncTime(){$('tt').value=t;$('tlab').textContent=t.toFixed(2)+' / '+(cur?cur.dur:0).toFixed(2)}
