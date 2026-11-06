@@ -144,7 +144,9 @@ html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;gr
 <div id="xadv" class="hint" style="margin:4px 0"></div>
 <div class="row"><button class="p" id="dlg">Download .glb</button></div>
 <div class="row"><button id="copy">Copy code</button></div>
-<div class="row"><button id="dlt">Code .txt</button><button id="dlh">Player .html</button></div>
+<div class="hint" style="margin:6px 0 2px"><b>No .glb needed:</b> click <b>Code .js file</b> - it downloads <b>ritmator-model.js</b> (your character as code). Put it in your game folder and load it with a &lt;script&gt; tag.</div>
+<div class="row"><button id="aip">Copy AI prompt</button></div>
+<div class="row"><button id="dlt">Code .js file</button><button id="dlh">Player .html</button></div>
 <div id="info2" class="hint">Only ticked clips are exported.<br>Shortcuts: Space play/pause, K set key, Delete remove key, Ctrl+Z undo, Ctrl+Y redo.</div>
 </aside>
 <div id="tl">
@@ -10716,11 +10718,24 @@ async function doExport(kind){
     if(kind==='html')await ensureLibs();
     say('Building export...');const was=wvOn;if(was)wvSet(false);let res;try{res=await buildGLB()}finally{if(was)wvSet(true)}const {names}=res,o=xopts(),buf=o.gzip?await gzip(res.buf):res.buf,b=b64(buf),kb=Math.round(b.length/1024);
     if(kind==='copy'){const ok=await copyText(code(b,names));say(ok?'Code copied ('+kb+' KB, '+names.length+' clips). Paste it into your game.':'Clipboard blocked. Use Code .txt instead.')}
-    if(kind==='txt'){await saveFile('ritmator-model.txt',code(b,names));say('Code ready ('+kb+' KB, '+names.length+' clips)')}
+    if(kind==='txt'){await saveFile('ritmator-model.js',code(b,names));say('Code ready ('+kb+' KB, '+names.length+' clips)')}
     if(kind==='html'){await saveFile('ritmator-player.html',player(b,names));say('Player ready ('+kb+' KB)')}
   }catch(e){say(typeof e==='string'?e:'Export failed')}
 }
 $('xpre').onchange=xdesc;xdesc();
+$('aip').onclick=async()=>{
+  const sel=clips.filter(c=>!xskip.has(c)).map(c=>c.name.replace(/[^\w-]/g,'_'));
+  if(!root||!bones.length||!sel.length)return say('Rig a model and tick at least one clip first');
+  const p='I am making a web game with Three.js (r147, classic build with THREE.GLTFLoader).\n'+
+  'My character is already converted to code by Ritmator and lives in its own file, "ritmator-model.js", which I load with <script src="ritmator-model.js"><\/script> BEFORE my game script. That file defines a huge constant RITMATOR_DATA (the whole rigged character with mesh, textures, skeleton and animations, gzipped + base64) and this function:\n\n'+LOADER+'\n'+
+  'IMPORTANT: do NOT try to read, decode, rewrite or reproduce RITMATOR_DATA - it is binary data, just call loadRitmator. There is no separate .glb file.\n\n'+
+  'Facts about the model:\n- Faces +Z (forward). Height about '+(H?H.toFixed(2):'1.8')+' units. Origin at the feet/hips of the root.\n- Humanoid bones: '+bones.map(b=>b.name).join(', ')+'.\n- Animation clip names (exact): '+sel.join(', ')+'.\n\n'+
+  'Usage:\nloadRitmator(new THREE.GLTFLoader(), r => { scene.add(r.scene); mixer = r.mixer; actions = r.actions; actions["'+sel[0]+'"].play(); });\n'+
+  'loadRitmator is async, so only use the character inside that callback. Call mixer.update(clock.getDelta()) every frame and cross-fade between clips with fadeOut/fadeIn (about 0.2 s).\n\n'+
+  'What I want in the game: [DESCRIBE YOUR GAME HERE - controls, camera, enemies, map, etc.]\n'+
+  'Please give complete working code and tell me which clip plays in which situation.';
+  say(await copyText(p)?'AI prompt copied. Replace the [DESCRIBE YOUR GAME] part and paste it into your AI.':'Clipboard blocked');
+};
 $('copy').onclick=()=>doExport('copy');$('dlt').onclick=()=>doExport('txt');$('dlh').onclick=()=>doExport('html');
 
 $('dlg').onclick=async()=>{try{say('Building .glb...');const was=wvOn;if(was)wvSet(false);let r;try{r=await buildGLB()}finally{if(was)wvSet(true)}const u=URL.createObjectURL(new Blob([r.buf],{type:'model/gltf-binary'})),a=document.createElement('a');a.href=u;a.download='ritmator-character.glb';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);say('Downloaded ritmator-character.glb ('+Math.round(r.buf.byteLength/1024)+' KB, '+r.names.length+' clips)')}catch(e){say(typeof e==='string'?e:'Export failed')}};
