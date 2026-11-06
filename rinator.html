@@ -103,6 +103,8 @@ html,body{height:auto}#vp{grid-row:1;height:46vh}#tl{grid-column:1;grid-row:2;gr
 <div class="pg" id="pgrid"></div>
 <div class="row"><button id="padd">Add all in category</button></div>
 <div class="row"><button id="cdup">Duplicate clip</button><button id="cdel">Delete clip</button></div>
+<div class="row"><button id="csave">Save clips (.json)</button><button id="cload">Load clips</button></div>
+<input type="file" id="cfile" accept=".json,application/json" hidden>
 </aside>
 <div id="vp"><div id="st">Load a .glb file, or drop it here</div></div>
 <aside id="R">
@@ -10000,7 +10002,7 @@ async function rigFromJoints(J,cx,info,V0){
   root=rig;scene.add(root);root.updateMatrixWorld(true);xfCapture();placeArrow();
   rigInfo={J:cloneJ(J),heads,tails,h,src:src.map((g,i)=>({geo:g,sm:sms[i]}))};
   lastJoints=cloneJ(J);lastCx=cx;undoS=[];redoS=[];
-  collect();clips=[];addPreset('idle');addPreset('walk');cur=clips[0];t=0;stopPlay();makeHelper();refresh();applyLight();
+  const keepClips=clips.length?clips:null;collect();clips=keepClips||[];if(!keepClips){addPreset('idle');addPreset('walk')}cur=clips[0];t=0;stopPlay();makeHelper();refresh();applyLight();
   say('Rigged: '+bones.length+' bones. '+(info||'')+' Placement now moves only the MESH (the rig stays). Joint wrong? Manual rig -> fix -> Apply rig.');
 }
 /* After rigging: move/rotate/scale only the mesh, then re-fit the skin to the fixed rig. */
@@ -10700,6 +10702,7 @@ function player(b,names){
   const boot='(function(){var B=["https://cdn.jsdelivr.net/npm/three@0.147.0/","https://unpkg.com/three@0.147.0/"],F=["build/three.min.js","examples/js/loaders/GLTFLoader.js"];function L(s){return new Promise(function(o,n){var e=document.createElement("script");e.src=s;e.onload=o;e.onerror=n;document.head.appendChild(e)})}(async function(){for(var i=0;i<B.length;i++){try{for(var j=0;j<F.length;j++)await L(B[i]+F[j]);break}catch(e){}}if(!window.THREE){document.body.textContent="Could not load Three.js (offline?)";return}(0,eval)(document.getElementById("ritmator-main").textContent)})()})();';
   return head+'<script id="ritmator-main" type="text/plain">'+esc(js)+'<\/script><script>'+boot+'<\/script><\/body><\/html>';
 }
+
 async function saveFile(name,text){
   try{const dl=window.claude&&await claude.use('downloads');if(dl){await dl.save({filename:name,data:text});return}}catch(e){if(e&&e.code==='declined')return}
   const a=document.createElement('a');const u=URL.createObjectURL(new Blob([text],{type:'text/plain'}));a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);
@@ -10862,6 +10865,23 @@ addEventListener('keydown',e=>{
   else if(e.key==='Delete')$('delk').click();
 });
 
+
+/* ---------- save / load clips (keeps your animation work between sessions and re-rigs) ---------- */
+$('csave').onclick=()=>{
+  if(!clips.length)return say('No clips to save');
+  const u=URL.createObjectURL(new Blob([JSON.stringify({ritmator:1,clips})],{type:'application/json'})),a=document.createElement('a');
+  a.href=u;a.download='ritmator-clips.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);say('Saved '+clips.length+' clips');
+};
+$('cload').onclick=()=>$('cfile').click();
+$('cfile').onchange=async e=>{
+  const f=e.target.files[0];e.target.value='';if(!f)return;
+  try{
+    const d=JSON.parse(await f.text());if(!d||d.ritmator!==1||!Array.isArray(d.clips))throw 0;
+    snap('');let n=0;
+    d.clips.forEach(c=>{if(!c||!c.tr||!(c.dur>0))return;let nm=String(c.name||'clip'),i=1;while(clips.some(x=>x.name===nm))nm=c.name+'_'+(++i);c.name=nm;clips.push(c);cur=c;n++});
+    t=0;refresh();say('Loaded '+n+' clips'+(bones.length?'':' (rig a model to see them)'));
+  }catch(err){say('That is not a Ritmator clips file')}
+};
 
 </script>
 <script>/* js/main.js */
